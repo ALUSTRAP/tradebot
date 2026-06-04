@@ -7,7 +7,7 @@ from telegram.ext import (
 )
 
 # ── CONFIG ───────────────────────────────────────────────────────────────────
-TOKEN = os.environ.get("BOT_TOKEN", "PASTE_YOUR_TOKEN_HERE")
+TOKEN = os.environ.get("BOT_TOKEN", "8733067183:AAFNzd6vzd6_vUgrR26f8RMlo2Ygt6AR9Xk")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
