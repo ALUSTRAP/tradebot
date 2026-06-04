@@ -2,26 +2,18 @@ import os
 import requests
 from datetime import datetime, timedelta, timezone
 
-# 1. Forex & Timeframe Configuration
+# 1. Forex Configuration
 FOREX_PAIRS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDCHF=X", "AUDUSD=X", "USDCAD=X", "NZDUSD=X"]
 TIMEFRAMES = ["15m", "30m", "1h"]
 
-# 2. Stock & Volatility Indices Configuration
-STOCK_INDICES = {
-    "^GSPC": "S&P 500",
-    "^IXIC": "Nasdaq 100",
-    "^DJI": "Dow Jones",
-    "^FTSE": "FTSE 100 (UK)",
-    "^GDAXI": "DAX 40 (GER)",
-    "^N225": "Nikkei 225 (JPN)",
-    "^STOXX50E": "Euro Stoxx 50",
-    "^FCHI": "CAC 40 (FRA)",
-    "^AXJO": "ASX 200 (AUS)"
-}
-
-VOLATILITY_INDICES = {
-    "^VIX": "CBOE Volatility Index (VIX)",
-    "^VXV": "3-Month Volatility Index"
+# 2. Liquid Futures (Using symbols that work seamlessly on the chart endpoint)
+FUTURES_INDICES = {
+    "ES=F": "S&P 500 Futures",
+    "NQ=F": "Nasdaq 100 Futures",
+    "YM=F": "Dow Jones Futures",
+    "RTY=F": "Russell 2000 Fut",
+    "NQ=M": "Micro Nasdaq Fut",
+    "^VIX": "CBOE Volatility (VIX)"
 }
 
 def calculate_ema(prices, period):
@@ -53,41 +45,40 @@ def calculate_rsi(prices, period=10):
         return 100.0
     return 100.0 - (100.0 / (1.0 + (avg_gain / avg_loss)))
 
-def fetch_group_prices(symbols_dict, headers):
+def get_futures_snapshot_safe(headers):
+    """Fetches futures data through the highly stable chart API endpoint to completely bypass summary blocks."""
     lines = []
-    symbols_string = ",".join(symbols_dict.keys())
-    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbols_string}"
-    try:
-        response = requests.get(url, headers=headers)
-        if response.status_code == 200:
-            result_list = response.json().get("quoteResponse", {}).get("result", [])
-            for item in result_list:
-                symbol = item.get("symbol")
-                friendly_name = symbols_dict.get(symbol, symbol)
-                price = item.get("regularMarketPrice")
-                change = item.get("regularMarketChangePercent", 0.0)
-                if price is not None:
-                    arrow = "🔺" if change >= 0 else "🔻"
-                    lines.append(f"• {friendly_name}: `{price:,.2f}` ({arrow}{change:.2f}%)")
-    except Exception as e:
-        print(f"Error fetching group indices: {e}")
-    return lines
-
-def get_indices_snapshot(headers):
-    stock_lines = fetch_group_prices(STOCK_INDICES, headers)
-    vol_lines = fetch_group_prices(VOLATILITY_INDICES, headers)
-    output = "📈 **Major Stock Indices**\n"
-    output += "\n".join(stock_lines) if stock_lines else "⚠️ Stock indices temporarily offline."
-    if vol_lines:
-        output += "\n\n⚠️ **Volatility & Sentiment**\n" + "\n".join(vol_lines)
+    
+    for symbol, friendly_name in FUTURES_INDICES.items():
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/{symbol}?range=2d&interval=1m"
+        try:
+            res = requests.get(url, headers=headers).json()
+            chart_data = res.get("chart", {}).get("result", [None])[0]
+            if not chart_data:
+                continue
+                
+            meta = chart_data.get("meta", {})
+            current_price = meta.get("regularMarketPrice")
+            prev_close = meta.get("previousClose")
+            
+            if current_price is not None and prev_close is not None:
+                # Calculate percent change manually since the summary endpoint is blocked
+                change_pct = ((current_price - prev_close) / prev_close) * 100
+                arrow = "🔺" if change_pct >= 0 else "🔻"
+                lines.append(f"• {friendly_name}: `{current_price:,.2f}` ({arrow}{change_pct:.2f}%)")
+        except Exception as e:
+            print(f"Error fetching chart data for {symbol}: {e}")
+            
+    output = "📊 **Live Global Futures Markets**\n"
+    if lines:
+        output += "\n".join(lines)
+    else:
+        output += "⚠️ Futures data feed temporarily lagging."
     return output
 
 def get_macro_news():
-    """Fetches global economic news events and determines what currencies are currently unsafe to trade."""
     unsafe_currencies = set()
     news_lines = []
-    
-    # Using an open-source unauthenticated financial calendar repository
     url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     
     try:
@@ -98,15 +89,13 @@ def get_macro_news():
             today_str = now_utc.strftime("%Y-%m-%d")
             
             for event in events:
-                event_date = event.get("date", "")[:10]  # Extracts YYYY-MM-DD
-                impact = event.get("impact", "").lower() # high (Red), medium (Orange/Yellow)
+                event_date = event.get("date", "")[:10]
+                impact = event.get("impact", "").lower()
                 currency = event.get("country", "").upper()
                 title = event.get("title", "Economic News")
                 
-                # We only track High (Red) and Medium (Yellow) events affecting our pairs
                 if impact in ["high", "medium"] and event_date == today_str:
                     event_time_str = event.get("date", "")
-                    # Convert to parsable datetime
                     try:
                         event_time = datetime.fromisoformat(event_time_str.replace("Z", "+00:00"))
                     except:
@@ -117,23 +106,20 @@ def get_macro_news():
                     
                     if impact == "high":
                         icon = "🔴 HIGH"
-                        # Red News Safety Rule: If within 30 mins before or after, lock out the currency
                         if time_diff <= 30:
                             unsafe_currencies.add(currency)
                     else:
                         icon = "🟡 MED"
                         
                     news_lines.append(f"• [{icon}] `{currency}` - {title} ({time_display})")
-                    
     except Exception as e:
         print(f"Error checking calendar: {e}")
         
     news_block = "🗓️ **Today's Macro News (Red & Yellow)**\n"
     if news_lines:
-        news_block += "\n".join(news_lines[:12])  # Display up to 12 events to avoid cluttered layouts
+        news_block += "\n".join(news_lines[:12])
     else:
-        news_block += "• No high/medium impact events scheduled for today."
-        
+        news_block += "• No major macro impacts scheduled for today."
     return news_block, unsafe_currencies
 
 def analyze_forex(headers, unsafe_currencies):
@@ -149,13 +135,10 @@ def analyze_forex(headers, unsafe_currencies):
         
         for pair in FOREX_PAIRS:
             clean_name = pair.replace("=X", "")
-            base_curr = clean_name[:3]  # e.g. EUR
-            quote_curr = clean_name[3:] # e.g. USD
+            base_curr = clean_name[:3]
+            quote_curr = clean_name[3:]
             
-            # AUTOMATIC SAFETY CHECK
             if base_curr in unsafe_currencies or quote_curr in unsafe_currencies:
-                # If checking quietly, skip scanning this pair due to active Red News proximity
-                print(f"Skipping {clean_name} due to active high-impact Red News.")
                 continue
                 
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{pair}?range={range_param}&interval={timeframe}"
@@ -188,20 +171,17 @@ def analyze_forex(headers, unsafe_currencies):
                 
     if not alerts:
         return "🔍 **Forex Technical Scan:** No new 9/12 EMA crosses found."
-        
     if unsafe_currencies:
-        alerts.append(f"\n⚠️ *Note: Certain pairs skipped scanning due to active 🔴 Red News status.*")
-        
+        alerts.append(f"\n⚠️ *Note: High impact news active. Certain currency pairs safely bypassed.*")
     return "🚨 **STRATEGY ALERTS TRIGGERED** 🚨\n" + "\n".join(alerts)
 
 def run_pipeline():
     headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
     }
     
     news_data, unsafe_currencies = get_macro_news()
-    indices_data = get_indices_snapshot(headers)
+    futures_data = get_futures_snapshot_safe(headers)
     forex_data = analyze_forex(headers, unsafe_currencies)
     
     final_report = (
@@ -209,7 +189,7 @@ def run_pipeline():
         "-------------------------\n"
         f"{news_data}\n"
         "-------------------------\n"
-        f"{indices_data}\n"
+        f"{futures_data}\n"
         "-------------------------\n"
         f"{forex_data}\n"
         "-------------------------\n"
