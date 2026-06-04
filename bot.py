@@ -1,9 +1,24 @@
 import os
 import requests
 
-# List of currency pairs to scan
-PAIRS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDCHF=X", "AUDUSD=X", "USDCAD=X", "NZDUSD=X"]
-TIMEFRAMES = ["30m", "1h"]
+# 1. Forex Configuration
+FOREX_PAIRS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDCHF=X", "AUDUSD=X", "USDCAD=X", "NZDUSD=X"]
+TIMEFRAMES = ["15m", "30m", "1h"]
+
+# 2. Stock & Volatility Indices Configuration (Fetched instantly on every run)
+INDICES = {
+    "^GSPC": "S&P 500",
+    "^IXIC": "Nasdaq 100",
+    "^DJI": "Dow Jones",
+    "^FTSE": "FTSE 100 (UK)",
+    "^GDAXI": "DAX 40 (GER)",
+    "^N225": "Nikkei 225 (JPN)",
+    "^STOXX50E": "Euro Stoxx 50",
+    "^FCHI": "CAC 40 (FRA)",
+    "^AXJO": "ASX 200 (AUS)",
+    "^VIX": "CBOE Volatility Index (VIX)",
+    "^VXV": "3-Month Volatility Index"
+}
 
 def calculate_ema(prices, period):
     """Calculates Exponential Moving Average."""
@@ -36,23 +51,52 @@ def calculate_rsi(prices, period=10):
         return 100.0
     return 100.0 - (100.0 / (1.0 + (avg_gain / avg_loss)))
 
-def calculate_macd(prices):
-    """Calculates MACD Line and Signal Line arrays."""
-    ema12 = calculate_ema(prices, 12)
-    ema26 = calculate_ema(prices, 26)
-    macd_line = [e12 - e26 for e12, e26 in zip(ema12, ema26)]
-    signal_line = [0.0] * 26 + calculate_ema(macd_line[26:], 9)
-    return macd_line, signal_line
-
-def analyze_market():
-    alerts = []
-    headers = {'User-Agent': 'Mozilla/5.0'}
+def get_indices_snapshot(headers):
+    """Fetches live current prices for Stock and Volatility Indices."""
+    symbols_string = ",".join(INDICES.keys())
+    url = f"https://query1.finance.yahoo.com/v7/finance/quote?symbols={symbols_string}"
     
-    for timeframe in TIMEFRAMES:
-        # Request appropriate history range depending on timeframe data density
-        range_param = "7d" if timeframe == "30m" else "14d"
+    try:
+        response = requests.get(url, headers=headers).json()
+        result_list = response.get("quoteResponse", {}).get("result", [])
         
-        for pair in PAIRS:
+        stock_lines = []
+        vol_lines = []
+        
+        for item in result_list:
+            symbol = item.get("symbol")
+            friendly_name = INDICES.get(symbol, symbol)
+            price = item.get("regularMarketPrice", 0.0)
+            change = item.get("regularMarketChangePercent", 0.0)
+            
+            # Format display with a directional arrow
+            arrow = "🔺" if change >= 0 else "🔻"
+            line = f"• {friendly_name}: `{price:,.2f}` ({arrow}{change:.2f}%)"
+            
+            if "Volatility" in friendly_name or symbol == "^VIX" or symbol == "^VXV":
+                vol_lines.append(line)
+            else:
+                stock_lines.append(line)
+                
+        output = "📈 **Major Stock Indices**\n" + "\n".join(stock_lines)
+        if vol_lines:
+            output += "\n\n⚠️ **Volatility & Sentiment (Fear Gauges)**\n" + "\n".join(vol_lines)
+        return output
+    except Exception as e:
+        return f"⚠️ Indices/Volatility Fetch Error: {str(e)}"
+
+def analyze_forex(headers):
+    """Scans Forex pairs for active 9/12 EMA crosses."""
+    alerts = []
+    for timeframe in TIMEFRAMES:
+        if timeframe == "15m":
+            range_param = "5d"
+        elif timeframe == "30m":
+            range_param = "7d"
+        else:
+            range_param = "14d"
+        
+        for pair in FOREX_PAIRS:
             clean_name = pair.replace("=X", "")
             url = f"https://query1.finance.yahoo.com/v8/finance/chart/{pair}?range={range_param}&interval={timeframe}"
             
@@ -65,51 +109,46 @@ def analyze_market():
                 close_prices = candles.get("indicators", {}).get("quote", [{}])[0].get("close", [])
                 close_prices = [p for p in close_prices if p is not None]
                 
-                if len(close_prices) < 35:  # Ensure enough historical data bars are present
+                if len(close_prices) < 20:
                     continue
                     
                 current_price = close_prices[-1]
-                
-                # Tech Indicator Calculations
                 ema9 = calculate_ema(close_prices, 9)
                 ema12 = calculate_ema(close_prices, 12)
                 rsi10 = calculate_rsi(close_prices, period=10)
-                macd_line, signal_line = calculate_macd(close_prices)
                 
-                # Check Crossovers (Comparing current closed candle [-1] against previous candle [-2])
                 ema_crossed_up = (ema9[-1] > ema12[-1] and ema9[-2] <= ema12[-2])
                 ema_crossed_down = (ema9[-1] < ema12[-1] and ema9[-2] >= ema12[-2])
                 
-                macd_crossed_up = (macd_line[-1] > signal_line[-1] and macd_line[-2] <= signal_line[-2])
-                macd_crossed_down = (macd_line[-1] < signal_line[-1] and macd_line[-2] >= signal_line[-2])
-                
-                # Bullish Alert Strategy Execution
-                if ema_crossed_up and macd_crossed_up:
-                    alerts.append(
-                        f"🟢 **BUY SIGNAL** • `{clean_name}` ({timeframe})\n"
-                        f"Price: `{current_price:.4f}`\n"
-                        f"• EMA 9 crossed above EMA 12\n"
-                        f"• MACD Bullish Cross Confirmed\n"
-                        f"• RSI(10): `{rsi10:.1f}`"
-                    )
-                
-                # Bearish Alert Strategy Execution
-                elif ema_crossed_down and rsi10 > 30 and macd_crossed_down:
-                    alerts.append(
-                        f"🔴 **SELL SIGNAL** • `{clean_name}` ({timeframe})\n"
-                        f"Price: `{current_price:.4f}`\n"
-                        f"• EMA 9 crossed below EMA 12\n"
-                        f"• MACD Bearish Cross Confirmed\n"
-                        f"• RSI(10): `{rsi10:.1f}` (Not Oversold)"
-                    )
+                if ema_crossed_up:
+                    alerts.append(f"🟢 **BUY** • `{clean_name}` ({timeframe}) | Price: `{current_price:.4f}` | RSI(10): `{rsi10:.1f}`")
+                elif ema_crossed_down and rsi10 > 30:
+                    alerts.append(f"🔴 **SELL** • `{clean_name}` ({timeframe}) | Price: `{current_price:.4f}` | RSI(10): `{rsi10:.1f}`")
                             
             except Exception as e:
                 print(f"Error scanning {clean_name} on {timeframe}: {e}")
                 
     if not alerts:
-        return "🔍 **Market Scan Completed:** No matching cross confirmations found on the 30m or 1h charts."
+        return "🔍 **Forex Technical Scan:** No new 9/12 EMA crosses on 15m, 30m, or 1h setups."
+    return "🚨 **STRATEGY ALERTS TRIGGERED** 🚨\n" + "\n".join(alerts)
+
+def run_pipeline():
+    headers = {'User-Agent': 'Mozilla/5.0'}
     
-    return "🚨 **STRATEGY ALERTS TRIGGERED** 🚨\n\n" + "\n\n---\n\n".join(alerts)
+    # Run both parts of your script
+    indices_data = get_indices_snapshot(headers)
+    forex_data = analyze_forex(headers)
+    
+    final_report = (
+        "📊 **Live Market Dashboard** 📊\n"
+        "-------------------------\n"
+        f"{indices_data}\n"
+        "-------------------------\n"
+        f"{forex_data}\n"
+        "-------------------------\n"
+        "⏰ *Checked automatically via GitHub*"
+    )
+    return final_report
 
 def send_telegram_alert(text_message):
     token = os.environ.get('TELEGRAM_TOKEN')
@@ -119,6 +158,5 @@ def send_telegram_alert(text_message):
     requests.post(url, json=payload)
 
 if __name__ == "__main__":
-    report = analyze_market()
+    report = run_pipeline()
     send_telegram_alert(report)
-    
