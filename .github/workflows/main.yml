@@ -1,31 +1,31 @@
-name: Strategy Forex & Indices Alerts
+name: Live Market Dashboard Autopilot
 
 on:
   schedule:
-    # Runs automatically every 15 minutes, Monday through Friday (Forex market hours)
+    # Triggers every 15 minutes, 24 hours a day, 5 days a week (Mon-Fri)
     - cron: '*/15 * * * 1-5'
-  workflow_dispatch: # Keeps the manual "Run workflow" button active for testing
+  workflow_dispatch:
+    # Keeps your manual trigger button active so you can test it anytime
 
 jobs:
-  run-forex-bot:
+  run-bot:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Copy files from GitHub repository
-      uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
-    - name: Ready up Python environment
-      uses: actions/setup-python@v5
-      with:
-        python-version: '3.10'
+      - name: Set Up Python
+        uses: actions/checkout@v4
+        with:
+          python-version: '3.10'
 
-    - name: Install required internet tools
-      run: |
-        python -m pip install --upgrade pip
-        pip install requests
+      - name: Install System Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
 
-    - name: Run the Bot Script
-      env:
-        TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-        TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-      run: python bot.py
+      - name: Execute Hybrid POI and EMA Bot
+        env:
+          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+        run: python bot.py
