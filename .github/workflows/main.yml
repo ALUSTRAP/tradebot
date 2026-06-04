@@ -1,10 +1,10 @@
-name: Hourly Forex Alerts
+name: Strategy Forex & Indices Alerts
 
 on:
   schedule:
-    # Runs every hour on the hour, Monday to Friday
-    - cron: '0 * * * 1-5'
-  workflow_dispatch: # Allows you to click a button and test it manually anytime
+    # Runs automatically every 15 minutes, Monday through Friday (Forex market hours)
+    - cron: '*/15 * * * 1-5'
+  workflow_dispatch: # Keeps the manual "Run workflow" button active for testing
 
 jobs:
   run-forex-bot:
@@ -29,4 +29,3 @@ jobs:
         TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
         TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
       run: python bot.py
-      
