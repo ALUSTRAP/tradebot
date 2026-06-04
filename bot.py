@@ -1,105 +1,124 @@
 import os
 import requests
 
-def get_live_market_data():
-    """Fetches live exchange rates and major stock indices using public endpoints."""
-    # 1. Fetch Forex Data
-    forex_url = "https://open.er-api.com/v6/latest/USD"
-    forex_text = "⚠️ Unable to fetch Forex market data."
-    
-    try:
-        f_response = requests.get(forex_url)
-        f_data = f_response.json()
-        
-        if f_data.get("result") == "success":
-            rates = f_data.get("rates", {})
-            
-            # Extract standard requested pairs (Reciprocals where USD is the quote)
-            eur_usd = 1 / rates.get("EUR", 1)
-            gbp_usd = 1 / rates.get("GBP", 1)
-            aud_usd = 1 / rates.get("AUD", 1)
-            nzd_usd = 1 / rates.get("NZD", 1)
-            
-            # Standard USD base pairs
-            usd_jpy = rates.get("JPY", 1)
-            usd_chf = rates.get("CHF", 1)
-            usd_cad = rates.get("CAD", 1)
-            
-            forex_text = (
-                "💱 **Major Forex Pairs**\n"
-                f"• EUR/USD: `{eur_usd:.4f}`\n"
-                f"• GBP/USD: `{gbp_usd:.4f}`\n"
-                f"• USD/JPY: `{usd_jpy:.2f}`\n"
-                f"• USD/CHF: `{usd_chf:.4f}`\n"
-                f"• AUD/USD: `{aud_usd:.4f}`\n"
-                f"• USD/CAD: `{usd_cad:.4f}`\n"
-                f"• NZD/USD: `{nzd_usd:.4f}`\n"
-            )
-    except Exception as e:
-        forex_text = f"⚠️ Forex Connection Error: {str(e)}"
+# List of currency pairs to scan
+PAIRS = ["EURUSD=X", "GBPUSD=X", "USDJPY=X", "USDCHF=X", "AUDUSD=X", "USDCAD=X", "NZDUSD=X"]
+TIMEFRAMES = ["30m", "1h"]
 
-    # 2. Fetch Major Stock Indices Data
-    indices_url = "https://query1.finance.yahoo.com/v7/finance/quote?symbols=^GSPC,^IXIC,^DJI,^FTSE,^GDAXI,^N225,^STOXX50E,^FCHI,^AXJO"
-    # Using a standard browser header to ensure Yahoo allows the script connection
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
-    indices_text = "⚠️ Unable to fetch Stock Indices data."
-    
-    try:
-        i_response = requests.get(indices_url, headers=headers)
-        i_data = i_response.json()
-        result_list = i_data.get("quoteResponse", {}).get("result", [])
-        
-        # Build dictionary matching ticker symbols to current market prices
-        prices = {item.get("symbol"): item.get("regularMarketPrice", 0.0) for item in result_list}
-        
-        indices_text = (
-            "📈 **Major Stock Indices**\n"
-            f"• S&P 500: `{prices.get('^GSPC', 0.0):,.2f}`\n"
-            f"• Nasdaq 100: `{prices.get('^IXIC', 0.0):,.2f}`\n"
-            f"• Dow Jones: `{prices.get('^DJI', 0.0):,.2f}`\n"
-            f"• FTSE 100 (UK): `{prices.get('^FTSE', 0.0):,.2f}`\n"
-            f"• DAX 40 (Germany): `{prices.get('^GDAXI', 0.0):,.2f}`\n"
-            f"• Nikkei 225 (Japan): `{prices.get('^N225', 0.0):,.2f}`\n"
-            f"• Euro Stoxx 50: `{prices.get('^STOXX50E', 0.0):,.2f}`\n"
-            f"• CAC 40 (France): `{prices.get('^FCHI', 0.0):,.2f}`\n"
-            f"• ASX 200 (Australia): `{prices.get('^AXJO', 0.0):,.2f}`\n"
-        )
-    except Exception as e:
-        indices_text = f"⚠️ Indices Connection Error: {str(e)}"
+def calculate_ema(prices, period):
+    """Calculates Exponential Moving Average."""
+    if len(prices) < period:
+        return [0.0] * len(prices)
+    ema = []
+    k = 2 / (period + 1)
+    sma = sum(prices[:period]) / period
+    ema.append(sma)
+    for price in prices[period:]:
+        next_ema = (price * k) + (ema[-1] * (1 - k))
+        ema.append(next_ema)
+    return [0.0] * (period - 1) + ema
 
-    # Combine into a final summary update
-    final_message = (
-        "📊 **Live Market Update** 📊\n"
-        "-------------------------\n"
-        f"{forex_text}\n"
-        f"{indices_text}"
-        "-------------------------\n"
-        "⏰ *Checked automatically via GitHub*"
-    )
-    return final_message
+def calculate_rsi(prices, period=10):
+    """Calculates Relative Strength Index (RSI)."""
+    if len(prices) < period + 1:
+        return 50.0
+    gains, losses = [], []
+    for i in range(1, len(prices)):
+        diff = prices[i] - prices[i-1]
+        gains.append(max(diff, 0))
+        losses.append(max(-diff, 0))
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+    if avg_loss == 0:
+        return 100.0
+    return 100.0 - (100.0 / (1.0 + (avg_gain / avg_loss)))
+
+def calculate_macd(prices):
+    """Calculates MACD Line and Signal Line arrays."""
+    ema12 = calculate_ema(prices, 12)
+    ema26 = calculate_ema(prices, 26)
+    macd_line = [e12 - e26 for e12, e26 in zip(ema12, ema26)]
+    signal_line = [0.0] * 26 + calculate_ema(macd_line[26:], 9)
+    return macd_line, signal_line
+
+def analyze_market():
+    alerts = []
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    
+    for timeframe in TIMEFRAMES:
+        # Request appropriate history range depending on timeframe data density
+        range_param = "7d" if timeframe == "30m" else "14d"
+        
+        for pair in PAIRS:
+            clean_name = pair.replace("=X", "")
+            url = f"https://query1.finance.yahoo.com/v8/finance/chart/{pair}?range={range_param}&interval={timeframe}"
+            
+            try:
+                res = requests.get(url, headers=headers).json()
+                candles = res.get("chart", {}).get("result", [None])[0]
+                if not candles:
+                    continue
+                    
+                close_prices = candles.get("indicators", {}).get("quote", [{}])[0].get("close", [])
+                close_prices = [p for p in close_prices if p is not None]
+                
+                if len(close_prices) < 35:  # Ensure enough historical data bars are present
+                    continue
+                    
+                current_price = close_prices[-1]
+                
+                # Tech Indicator Calculations
+                ema9 = calculate_ema(close_prices, 9)
+                ema12 = calculate_ema(close_prices, 12)
+                rsi10 = calculate_rsi(close_prices, period=10)
+                macd_line, signal_line = calculate_macd(close_prices)
+                
+                # Check Crossovers (Comparing current closed candle [-1] against previous candle [-2])
+                ema_crossed_up = (ema9[-1] > ema12[-1] and ema9[-2] <= ema12[-2])
+                ema_crossed_down = (ema9[-1] < ema12[-1] and ema9[-2] >= ema12[-2])
+                
+                macd_crossed_up = (macd_line[-1] > signal_line[-1] and macd_line[-2] <= signal_line[-2])
+                macd_crossed_down = (macd_line[-1] < signal_line[-1] and macd_line[-2] >= signal_line[-2])
+                
+                # Bullish Alert Strategy Execution
+                if ema_crossed_up and macd_crossed_up:
+                    alerts.append(
+                        f"🟢 **BUY SIGNAL** • `{clean_name}` ({timeframe})\n"
+                        f"Price: `{current_price:.4f}`\n"
+                        f"• EMA 9 crossed above EMA 12\n"
+                        f"• MACD Bullish Cross Confirmed\n"
+                        f"• RSI(10): `{rsi10:.1f}`"
+                    )
+                
+                # Bearish Alert Strategy Execution
+                elif ema_crossed_down and rsi10 > 30 and macd_crossed_down:
+                    alerts.append(
+                        f"🔴 **SELL SIGNAL** • `{clean_name}` ({timeframe})\n"
+                        f"Price: `{current_price:.4f}`\n"
+                        f"• EMA 9 crossed below EMA 12\n"
+                        f"• MACD Bearish Cross Confirmed\n"
+                        f"• RSI(10): `{rsi10:.1f}` (Not Oversold)"
+                    )
+                            
+            except Exception as e:
+                print(f"Error scanning {clean_name} on {timeframe}: {e}")
+                
+    if not alerts:
+        return "🔍 **Market Scan Completed:** No matching cross confirmations found on the 30m or 1h charts."
+    
+    return "🚨 **STRATEGY ALERTS TRIGGERED** 🚨\n\n" + "\n\n---\n\n".join(alerts)
 
 def send_telegram_alert(text_message):
-    """Sends the formatted alert to your Telegram Bot."""
     token = os.environ.get('TELEGRAM_TOKEN')
     chat_id = os.environ.get('TELEGRAM_CHAT_ID')
-    
-    if not token or not chat_id:
-        print("Missing API tokens. Check your GitHub Secrets!")
-        return
-
     url = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {
-        "chat_id": chat_id,
-        "text": text_message,
-        "parse_mode": "Markdown"
-    }
-    
-    response = requests.post(url, json=payload)
-    if response.status_code == 200:
-        print("Alert sent successfully to Telegram!")
-    else:
-        print(f"Failed to send message: {response.text}")
+    payload = {"chat_id": chat_id, "text": text_message, "parse_mode": "Markdown"}
+    requests.post(url, json=payload)
 
 if __name__ == "__main__":
-    market_update = get_live_market_data()
-    send_telegram_alert(market_update)
+    report = analyze_market()
+    send_telegram_alert(report)
+    
