@@ -27,13 +27,23 @@ DERIV_PAIRS = [
 TIMEFRAMES = ['15m', '30m', '1h']
 
 def send_telegram_alert(message):
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
+    token = str(TELEGRAM_BOT_TOKEN).strip()
+    chat_id = str(TELEGRAM_CHAT_ID).strip()
+    
+    # Remove 'bot' prefix if accidentally pasted into the GitHub Secrets box
+    if token.lower().startswith('bot'):
+        token = token[3:]
+        
+    print(f"DEBUG: Using Token: {token[:5]}... | Using Chat ID: {chat_id}")
+    
+    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
     try:
         r = requests.post(url, json=payload, timeout=15)
         print(f"Telegram Server Response: {r.status_code}")
     except Exception as e:
-        print(f"Telegram execution alert error: {e}")
+        print(f"Telegram communication error: {e}")
+        
 
 # ==========================================
 # 2. FUTURES & MACRO LIVE UTILITIES
