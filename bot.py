@@ -1,5 +1,6 @@
 import os
 import json
+import time
 import asyncio
 import websockets
 import requests
@@ -26,7 +27,6 @@ DERIV_PAIRS = [
     'JD10', 'JD25', 'STP', 'STP200', 'STP300', 'STP400', 'STP500'
 ]
 
-# Full timeframe array completely enabled for both engines
 TIMEFRAMES = ['15m', '30m', '1h', '4h']
 
 def send_telegram_alert(message):
@@ -46,7 +46,6 @@ def send_telegram_alert(message):
 # 2. MATCHED LAGOS TIME (UTC+5 ADJUSTED)
 # ==========================================
 def get_futures_and_news_layout():
-    # Adjusted precisely by +5 hours to perfectly snap to your local clock
     lagos_now = datetime.utcnow() + timedelta(hours=5)
     timestamp_str = lagos_now.strftime("%Y-%m-%d %H:%M")
     
@@ -107,7 +106,12 @@ async def fetch_deriv_candles(symbol, granularity, count=150):
 
 def get_deriv_data(symbol, timeframe):
     tf_map = {'15m': 900, '30m': 1800, '1h': 3600, '4h': 14400}
-    return asyncio.run(fetch_deriv_candles(symbol, tf_map.get(timeframe, 900), count=150))
+    # Add a tiny 0.2 second pause to prevent anti-spam triggers on Deriv's API server
+    time.sleep(0.2)
+    try:
+        return asyncio.run(fetch_deriv_candles(symbol, tf_map.get(timeframe, 900), count=150))
+    except:
+        return None
 
 def get_yahoo_data(symbol, timeframe):
     try:
@@ -188,7 +192,6 @@ def main():
     }
     
     for symbol in (STANDARD_PAIRS + DERIV_PAIRS):
-        # Cache 4H and 15m data frames directly for the structural parsing engine
         df_4h_cached = None
         df_15m_cached = None
         
@@ -199,17 +202,14 @@ def main():
                 if df is None or df.empty or len(df) < 15: 
                     continue
                 
-                # Cache arrays explicitly to avoid re-fetching calls later
                 if tf == '4h': df_4h_cached = df.copy()
                 if tf == '15m': df_15m_cached = df.copy()
                     
-                # Calculate indicators across ALL active timeframes
                 df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
                 df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
                 
                 clean_name = display_names.get(symbol, symbol)
                 
-                # Multi-timeframe EMA Crossover Parsing Layer
                 if df['EMA_9'].iloc[-2] <= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] > df['EMA_12'].iloc[-1]:
                     ema_crossovers.append(f"🟢 <b>EMA CROSS OVER:</b> Bullish • {clean_name} ({tf})")
                 elif df['EMA_9'].iloc[-2] >= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] < df['EMA_12'].iloc[-1]:
@@ -219,7 +219,6 @@ def main():
                 print(f"Skipping indicator loop for {symbol} on {tf}: {e}")
                 continue
                 
-        # Run SMC structural scanning using the cached timeframes
         if df_4h_cached is not None:
             try:
                 smc_result = run_smc_analysis(df_4h_cached, df_15m_cached)
@@ -230,14 +229,13 @@ def main():
             except Exception as e:
                 print(f"SMC validation error for {symbol}: {e}")
 
-    # Package output text layout
     final_output = [header_layout, "------------------------"]
     
     if alerts or ema_crossovers:
         if alerts:
             final_output.append("🚨 <b>SMC MARKET STRUCTURE ALERTS</b> 🚨")
             final_output.extend(alerts)
-            final_output.append("") # Spatial cushion
+            final_output.append("") 
             
         if ema_crossovers:
             final_output.append("📈 <b>9/12 EMA TREND BREAKOUTS (15m, 30m, 1h, 4h)</b>")
