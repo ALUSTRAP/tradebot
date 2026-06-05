@@ -13,29 +13,14 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 STANDARD_PAIRS = [
-    # Forex Majors
     'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'USDCHF=X', 'USDCAD=X', 'NZDUSD=X',
-    # Global Stock Indices (Yahoo Tickers mapped to your request)
-    '^DJI',    # US30
-    '^GSPC',   # SPX500
-    '^IXIC',   # NAS100
-    '^N225',   # Jp225
-    '^FTSE',   # Uk100
-    '^AXJO',   # Aus200
-    '^AEX',    # Nth25
-    '^FCHI'    # Fra40
+    '^DJI', '^GSPC', '^IXIC', '^N225', '^FTSE', '^AXJO', '^AEX', '^FCHI'
 ]
 
 DERIV_PAIRS = [
-    # Standard Volatility Indices
     'R_10', 'R_25', 'R_50', 'R_75', 'R_100', 'R_90',
-    # 1s Volatility Indices
     '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ90V', '1HZ100V',
-    # Jump Indices
-    'JD10', 'JD25',
-    # Boom Indices
-    'BOOM300', 'BOOM900', 'BOOM1000',
-    # Step Indices
+    'JD10', 'JD25', 'BOOM300', 'BOOM900', 'BOOM1000',
     'STP', 'STP200', 'STP300', 'STP400', 'STP500'
 ]
 
@@ -45,9 +30,10 @@ def send_telegram_alert(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
     payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message, "parse_mode": "HTML"}
     try:
-        requests.post(url, json=payload)
+        r = requests.post(url, json=payload, timeout=15)
+        print(f"Telegram Server Response: {r.status_code}")
     except Exception as e:
-        print(f"Telegram error: {e}")
+        print(f"Telegram execution alert error: {e}")
 
 # ==========================================
 # 2. FUTURES & MACRO LIVE UTILITIES
@@ -66,18 +52,19 @@ def get_futures_and_news_layout():
             tick = yf.Ticker(ticker)
             history = tick.history(period="2d")
             if len(history) >= 2:
-                close_curr = history['Close'].iloc[-1]
-                close_prev = history['Close'].iloc[-2]
+                close_curr = float(history['Close'].iloc[-1])
+                close_prev = float(history['Close'].iloc[-2])
                 pct = ((close_curr - close_prev) / close_prev) * 100
                 arrow = "🔺" if pct >= 0 else "🔻"
                 layout += f"• {name}: {close_curr:,.2f} ({arrow} {pct:.2f}%)\n"
             else:
                 layout += f"• {name}: Data Streaming...\n"
-    except:
+    except Exception as e:
         layout += "• Futures Matrix: Live Feed Refreshing...\n"
+        print(f"Layout engine mismatch: {e}")
         
     layout += "\n📅 <b>Today's Macro News (Red & Yellow Folders)</b>\n"
-    layout += "• 🟡 MED USD - Unemployment Claims (08:30 UTC)\n• 🔴 HIGH GBP - BOE Gov Bailey Speaks\n• 🟡 MED USD - US Session Open Volatility\n"
+    layout += "• 🔴 HIGH USD - Non-Farm Employment Change (08:30 UTC)\n• 🔴 HIGH USD - Unemployment Rate (08:30 UTC)\n• 🟡 MED CAD - Ivey PMI (10:00 UTC)\n"
     return layout
 
 # ==========================================
@@ -109,19 +96,32 @@ async def fetch_deriv_candles(symbol, granularity):
 
 def get_deriv_data(symbol, timeframe):
     tf_map = {'15m': 900, '30m': 1800, '1h': 3600}
-    return asyncio.run(fetch_deriv_candles(symbol, tf_map.get(timeframe, 900)))
+    try:
+        return asyncio.run(fetch_deriv_candles(symbol, tf_map.get(timeframe, 900)))
+    except:
+        return None
 
 def get_yahoo_data(symbol, timeframe):
     try:
-        df = yf.download(symbol, interval=timeframe, period="3d", progress=False)
+        # Enforce multi_level_index=False to prevent yfinance grouping bugs
+        df = yf.download(symbol, interval=timeframe, period="3d", progress=False, multi_level_index=False)
         if df.empty: return None
+        
         df.reset_index(inplace=True)
-        if isinstance(df.columns, pd.MultiIndex):
-            df.columns = [col[0] if col[0] else col[1] for col in df.columns]
-        df.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close'}, inplace=True)
-        return df
-    except:
-        return None
+        
+        # Clean column names meticulously
+        df.columns = [str(c).strip().lower().capitalize() for c in df.columns]
+        
+        # Ensure structural names are fully mapped out for data frame analysis
+        required_cols = ['Open', 'High', 'Low', 'Close']
+        if all(col in df.columns for col in required_cols):
+            clean_df = df[required_cols].copy()
+            for col in required_cols:
+                clean_df[col] = pd.to_numeric(clean_df[col], errors='coerce')
+            return clean_df.dropna()
+    except Exception as e:
+        print(f"Yahoo parser error skipped for {symbol}: {e}")
+    return None
 
 # ==========================================
 # 4. STRATEGY MATHEMATICS
@@ -139,12 +139,12 @@ def calculate_indicators(df):
 def run_analysis(df):
     if len(df) < 5: return None, None
     
-    # 1. EMA 9/12 Crossover Logic
     momentum = None
-    if df['EMA_9'].iloc[-2] <= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] > df['EMA_12'].iloc[-1]: momentum = "BUY"
-    elif df['EMA_9'].iloc[-2] >= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] < df['EMA_12'].iloc[-1]: momentum = "SELL"
+    if df['EMA_9'].iloc[-2] <= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] > df['EMA_12'].iloc[-1]: 
+        momentum = "BUY"
+    elif df['EMA_9'].iloc[-2] >= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] < df['EMA_12'].iloc[-1]: 
+        momentum = "SELL"
     
-    # 2. Institutional POI Concept Logic (Order Blocks & Breaker Rejection)
     poi = None
     recent_high = df['High'].iloc[-5:-1].max()
     recent_low = df['Low'].iloc[-5:-1].min()
@@ -166,8 +166,9 @@ def main():
     alerts = []
     header_layout = get_futures_and_news_layout()
     
-    # Friendly formatting map for index tickers
     display_names = {
+        'EURUSD=X': 'EURUSD', 'GBPUSD=X': 'GBPUSD', 'AUDUSD=X': 'AUDUSD',
+        'USDCHF=X': 'USDCHF', 'USDCAD=X': 'USDCAD', 'NZDUSD=X': 'NZDUSD',
         '^DJI': 'US30', '^GSPC': 'SPX500', '^IXIC': 'NAS100', 
         '^N225': 'Jp225', '^FTSE': 'Uk100', '^AXJO': 'Aus200', 
         '^AEX': 'Nth25', '^FCHI': 'Fra40'
@@ -175,21 +176,27 @@ def main():
     
     for symbol in (STANDARD_PAIRS + DERIV_PAIRS):
         for tf in TIMEFRAMES:
-            df = get_deriv_data(symbol, tf) if symbol in DERIV_PAIRS else get_yahoo_data(symbol, tf)
-            
-            if df is None or df.empty or len(df) < 15: continue
-            df = calculate_indicators(df)
-            momentum, poi = run_analysis(df)
-            
-            clean_name = display_names.get(symbol, symbol.replace('=X', ''))
-            price = round(df['Close'].iloc[-1], 4)
-            rsi = round(df['RSI'].iloc[-1], 1)
-            
-            if momentum:
-                icon = "🟢" if momentum == "BUY" else "🔴"
-                alerts.append(f"{icon} <b>MOMENTUM ALERT:</b> {momentum} • {clean_name} ({tf}) | Price: {price} | RSI: {rsi}")
-            if poi:
-                alerts.append(f"🏛️ <b>INSTITUTIONAL POI:</b> {clean_name} ({tf}) • {poi} | Price: {price}")
+            try:
+                df = get_deriv_data(symbol, tf) if symbol in DERIV_PAIRS else get_yahoo_data(symbol, tf)
+                
+                if df is None or df.empty or len(df) < 15: 
+                    continue
+                    
+                df = calculate_indicators(df)
+                momentum, poi = run_analysis(df)
+                
+                clean_name = display_names.get(symbol, symbol)
+                price = round(float(df['Close'].iloc[-1]), 4)
+                rsi = round(float(df['RSI'].iloc[-1]), 1)
+                
+                if momentum:
+                    icon = "🟢" if momentum == "BUY" else "🔴"
+                    alerts.append(f"{icon} <b>MOMENTUM ALERT:</b> {momentum} • {clean_name} ({tf}) | Price: {price} | RSI: {rsi}")
+                if poi:
+                    alerts.append(f"🏛️ <b>INSTITUTIONAL POI:</b> {clean_name} ({tf}) • {poi} | Price: {price}")
+            except Exception as e:
+                print(f"Skipping layout mismatch for asset {symbol}: {e}")
+                continue
 
     if alerts:
         message = f"{header_layout}\n------------------------\n🚨 <b>STRATEGY ALERTS DETECTED</b> 🚨\n\n" + "\n".join(alerts) + "\n\n------------------------\n⏰ Autopilot active via GitHub"
@@ -200,3 +207,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+    
