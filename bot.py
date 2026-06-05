@@ -24,26 +24,23 @@ DERIV_PAIRS = [
     'STP', 'STP200', 'STP300', 'STP400', 'STP500'
 ]
 
-TIMEFRAMES = ['15m', '30m', '1h']
+# Added '3h' to the execution loop
+TIMEFRAMES = ['15m', '30m', '1h', '3h']
 
 def send_telegram_alert(message):
     token = str(TELEGRAM_BOT_TOKEN).strip()
     chat_id = str(TELEGRAM_CHAT_ID).strip()
     
-    # Remove 'bot' prefix if accidentally pasted into the GitHub Secrets box
     if token.lower().startswith('bot'):
         token = token[3:]
         
-    print(f"DEBUG: Using Token: {token[:5]}... | Using Chat ID: {chat_id}")
-    
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {"chat_id": chat_id, "text": message, "parse_mode": "HTML"}
     try:
         r = requests.post(url, json=payload, timeout=15)
         print(f"Telegram Server Response: {r.status_code}")
     except Exception as e:
-        print(f"Telegram communication error: {e}")
-        
+        print(f"Telegram execution alert error: {e}")
 
 # ==========================================
 # 2. FUTURES & MACRO LIVE UTILITIES
@@ -105,7 +102,8 @@ async def fetch_deriv_candles(symbol, granularity):
         return None
 
 def get_deriv_data(symbol, timeframe):
-    tf_map = {'15m': 900, '30m': 1800, '1h': 3600}
+    # Added 10800 seconds to map the 3h timeframe correctly for Deriv
+    tf_map = {'15m': 900, '30m': 1800, '1h': 3600, '3h': 10800}
     try:
         return asyncio.run(fetch_deriv_candles(symbol, tf_map.get(timeframe, 900)))
     except:
@@ -113,16 +111,13 @@ def get_deriv_data(symbol, timeframe):
 
 def get_yahoo_data(symbol, timeframe):
     try:
-        # Enforce multi_level_index=False to prevent yfinance grouping bugs
-        df = yf.download(symbol, interval=timeframe, period="3d", progress=False, multi_level_index=False)
+        # yfinance uses '3h' naturally as a standard parameter
+        df = yf.download(symbol, interval=timeframe, period="5d", progress=False, multi_level_index=False)
         if df.empty: return None
         
         df.reset_index(inplace=True)
-        
-        # Clean column names meticulously
         df.columns = [str(c).strip().lower().capitalize() for c in df.columns]
         
-        # Ensure structural names are fully mapped out for data frame analysis
         required_cols = ['Open', 'High', 'Low', 'Close']
         if all(col in df.columns for col in required_cols):
             clean_df = df[required_cols].copy()
@@ -217,4 +212,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-    
+        
