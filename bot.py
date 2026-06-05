@@ -17,14 +17,15 @@ STANDARD_PAIRS = [
     '^DJI', '^GSPC', '^IXIC', '^N225', '^FTSE', '^AXJO', '^AEX', '^FCHI'
 ]
 
+# Fully updated to include the complete Crash & Boom suite along with Volatility/Step
 DERIV_PAIRS = [
+    'BOOM300', 'BOOM500', 'BOOM600', 'BOOM900', 'BOOM1000',
+    'CRASH300', 'CRASH500', 'CRASH600', 'CRASH900', 'CRASH1000',
     'R_10', 'R_25', 'R_50', 'R_75', 'R_100', 'R_90',
     '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ90V', '1HZ100V',
-    'JD10', 'JD25', 'BOOM300', 'BOOM900', 'BOOM1000',
-    'STP', 'STP200', 'STP300', 'STP400', 'STP500'
+    'JD10', 'JD25', 'STP', 'STP200', 'STP300', 'STP400', 'STP500'
 ]
 
-# Added '3h' to the execution loop
 TIMEFRAMES = ['15m', '30m', '1h', '3h']
 
 def send_telegram_alert(message):
@@ -102,7 +103,6 @@ async def fetch_deriv_candles(symbol, granularity):
         return None
 
 def get_deriv_data(symbol, timeframe):
-    # Added 10800 seconds to map the 3h timeframe correctly for Deriv
     tf_map = {'15m': 900, '30m': 1800, '1h': 3600, '3h': 10800}
     try:
         return asyncio.run(fetch_deriv_candles(symbol, tf_map.get(timeframe, 900)))
@@ -111,7 +111,6 @@ def get_deriv_data(symbol, timeframe):
 
 def get_yahoo_data(symbol, timeframe):
     try:
-        # yfinance uses '3h' naturally as a standard parameter
         df = yf.download(symbol, interval=timeframe, period="5d", progress=False, multi_level_index=False)
         if df.empty: return None
         
@@ -171,6 +170,7 @@ def main():
     alerts = []
     header_layout = get_futures_and_news_layout()
     
+    # Text mapping to keep the Telegram layouts looking readable
     display_names = {
         'EURUSD=X': 'EURUSD', 'GBPUSD=X': 'GBPUSD', 'AUDUSD=X': 'AUDUSD',
         'USDCHF=X': 'USDCHF', 'USDCAD=X': 'USDCAD', 'NZDUSD=X': 'NZDUSD',
@@ -212,4 +212,4 @@ def main():
 
 if __name__ == "__main__":
     main()
-        
+    
