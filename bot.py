@@ -16,16 +16,29 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 STANDARD_PAIRS = [
+    # Forex Majors
     'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'USDCHF=X', 'USDCAD=X', 'NZDUSD=X',
-    '^DJI', '^GSPC', '^IXIC', '^N225', '^FTSE', '^AXJO', '^AEX', '^FCHI'
+    # Global Indices
+    '^GSPC',   # SPX (S&P 500)
+    '^AEX',    # Nth (Netherlands 25)
+    '^N225',   # Jp225 (Nikkei)
+    '^FTSE',   # Uk100 (FTSE)
+    '^IXIC',   # Nasdaq
+    '^GDAXI',  # GER (DAX)
+    '^FCHI'    # FRA (CAC 40)
 ]
 
 DERIV_PAIRS = [
-    'BOOM300', 'BOOM500', 'BOOM600', 'BOOM900', 'BOOM1000',
-    'CRASH300', 'CRASH500', 'CRASH600', 'CRASH900', 'CRASH1000',
-    'R_10', 'R_25', 'R_50', 'R_75', 'R_100', 'R_90',
+    # Standard Volatility
+    'R_10', 'R_25', 'R_50', 'R_75', 'R_90', 'R_100',
+    # 1s Volatility
     '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ90V', '1HZ100V',
-    'JD10', 'JD25', 'STP', 'STP200', 'STP300', 'STP400', 'STP500'
+    # Jump Indices
+    'JD10', 'JD25',
+    # Boom / Crash
+    'BOOM300', 'BOOM900', 'BOOM1000', 
+    # Step Indices
+    'STP', 'STP200', 'STP300', 'STP400', 'STP500'
 ]
 
 TIMEFRAMES = ['15m', '30m', '1h', '4h']
