@@ -7,6 +7,7 @@ import requests
 import pandas as pd
 import yfinance as yf
 from datetime import datetime, timedelta
+import numpy as np
 
 # ==========================================
 # 1. CONFIGURATION & TARGET ASSETS
@@ -43,24 +44,22 @@ def send_telegram_alert(message):
         print(f"Telegram execution alert error: {e}")
 
 # ==========================================
-# 2. MATCHED TIME ENGINE & MARKET SESSION FILTER
+# 2. TIME ENGINE & QUARTERLY THEORY
 # ==========================================
 def get_market_context():
-    # Calibrated precisely to Lagos, Nigeria Time (UTC+1)
     lagos_now = datetime.utcnow() + timedelta(hours=1)
     timestamp_str = lagos_now.strftime("%Y-%m-%d %H:%M")
-    is_weekend = lagos_now.weekday() >= 5  # 5 = Saturday, 6 = Sunday
+    is_weekend = lagos_now.weekday() >= 5 
 
     time_float = lagos_now.hour + (lagos_now.minute / 60.0)
     
-    # Quarterly Time Windows (Lagos Market Session Hours)
-    is_london_q2 = (10.5 <= time_float < 12.0)  # 10:30 - 12:00 Manipulation Phase
-    is_london_q3 = (12.0 <= time_float < 13.5)  # 12:00 - 13:30 Distribution Phase
-    is_ny_q2     = (15.5 <= time_float < 17.0)  # 15:30 - 17:00 Manipulation Phase
-    is_ny_q3     = (17.0 <= time_float < 18.5)  # 17:00 - 18:30 Distribution Phase
+    is_london_q2 = (10.5 <= time_float < 12.0)  
+    is_london_q3 = (12.0 <= time_float < 13.5)  
+    is_ny_q2     = (15.5 <= time_float < 17.0)  
+    is_ny_q3     = (17.0 <= time_float < 18.5)  
 
     if is_london_q2 or is_ny_q2:
-        qt_status = "⚠️ Q2 MANIPULATION PHASE (Wyckoff Trap Window)"
+        qt_status = "⚠️ Q2 MANIPULATION PHASE (Liquidity Trap Window)"
     elif is_london_q3 or is_ny_q3:
         qt_status = "🔥 Q3 DISTRIBUTION PHASE (SMC Order Delivery Window)"
     else:
@@ -124,22 +123,39 @@ def get_yahoo_data(symbol, timeframe):
     return None
 
 # ==========================================
-# 4. TRADING LOGIC STRATEGY ENGINE
+# 4. CHARTNAGARI SMC LOGIC EXTRACTION
 # ==========================================
-def check_wyckoff_trap(df_4h):
-    if df_4h is None or len(df_4h) < 30: return None
+def chartnagari_smc_scanner(df):
+    """
+    Translates Go logic to calculate Swing Highs/Lows, Liquidity Sweeps, and Order Blocks.
+    """
+    if df is None or len(df) < 50:
+        return None
+
+    df = df.copy()
     
-    close_4h = df_4h['Close'].iloc[-1]
-    high_4h = df_4h['High'].iloc[-1]
-    low_4h = df_4h['Low'].iloc[-1]
+    # Calculate Swing Highs and Lows (Fractal Logic)
+    df['Swing_High'] = df['High'][(df['High'] > df['High'].shift(1)) & (df['High'] > df['High'].shift(2)) & (df['High'] > df['High'].shift(-1)) & (df['High'] > df['High'].shift(-2))]
+    df['Swing_Low'] = df['Low'][(df['Low'] < df['Low'].shift(1)) & (df['Low'] < df['Low'].shift(2)) & (df['Low'] < df['Low'].shift(-1)) & (df['Low'] < df['Low'].shift(-2))]
     
-    pullback_high = df_4h['High'].iloc[-6:-2].max()
-    pullback_low = df_4h['Low'].iloc[-6:-2].min()
+    # Forward fill to maintain the levels across candles
+    df['Last_Swing_High'] = df['Swing_High'].ffill()
+    df['Last_Swing_Low'] = df['Swing_Low'].ffill()
+
+    current_close = df['Close'].iloc[-1]
+    current_high = df['High'].iloc[-1]
+    current_low = df['Low'].iloc[-1]
     
-    if high_4h > pullback_high and close_4h <= pullback_high:
-        return "⚠️ Wyckoff Upthrust Sweep (Bearish Trap)"
-    elif low_4h < pullback_low and close_4h >= pullback_low:
-        return "⚠️ Wyckoff Spring Sweep (Bullish Trap)"
+    prev_swing_high = df['Last_Swing_High'].iloc[-3]
+    prev_swing_low = df['Last_Swing_Low'].iloc[-3]
+    
+    # Sweep Detection (Wick crosses swing level, but candle body closes inside)
+    if current_high > prev_swing_high and current_close < prev_swing_high:
+        return "⚠️ Sell-Side Trap: Liquidity Swept Above Swing High (Bearish OB Forming)"
+        
+    elif current_low < prev_swing_low and current_close > prev_swing_low:
+        return "⚠️ Buy-Side Trap: Liquidity Swept Below Swing Low (Bullish OB Forming)"
+
     return None
 
 # ==========================================
@@ -172,11 +188,9 @@ def main():
                 if tf == '4h': 
                     df_4h_cached = df.copy()
                 
-                # Rigid 9/12 EMA Calculation across active timeframes
                 df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
                 df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
                 
-                # Check for an immediate standalone EMA Crossover signal
                 if df['EMA_9'].iloc[-2] <= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] > df['EMA_12'].iloc[-1]:
                     triggered_alerts.append(f"🟢 <b>EMA BULLISH CROSSOVER</b>\n📈 Asset: <b>{clean_name} ({tf})</b>\n📊 Time Context: {qt_status}\n💰 Price: {round(df['Close'].iloc[-1], 4)}")
                 elif df['EMA_9'].iloc[-2] >= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] < df['EMA_12'].iloc[-1]:
@@ -186,17 +200,15 @@ def main():
                 print(f"Error looping indicators for {symbol} on {tf}: {e}")
                 continue
                 
-        # Check for standalone 4H Wyckoff Liquidity Trap signals
         if df_4h_cached is not None:
             try:
-                trap_result = check_wyckoff_trap(df_4h_cached)
+                trap_result = chartnagari_smc_scanner(df_4h_cached)
                 if trap_result:
                     current_price = round(float(df_4h_cached['Close'].iloc[-1]), 4)
-                    triggered_alerts.append(f"🏛️ <b>INSTITUTIONAL WYCKOFF TRAP</b>\n🚨 Signal: <b>{trap_result}</b>\n🎯 Asset: <b>{clean_name} (4H)</b>\n📊 Time Context: {qt_status}\n💰 Current Price: {current_price}")
+                    triggered_alerts.append(f"🏛️ <b>SMC LIQUIDITY TRAP DETECTED</b>\n🚨 Signal: <b>{trap_result}</b>\n🎯 Asset: <b>{clean_name} (4H)</b>\n📊 Time Context: {qt_status}\n💰 Current Price: {current_price}")
             except Exception as e:
-                print(f"Wyckoff scanning fault on {symbol}: {e}")
+                print(f"SMC scanning fault on {symbol}: {e}")
 
-    # Execution Ruleset: ONLY broadcast messages if a clear standalone signal hit
     if triggered_alerts:
         final_payload = [
             f"⚡ <b>TRADERULES COMPASS SIGNALS (Lagos: {timestamp_str})</b>",
