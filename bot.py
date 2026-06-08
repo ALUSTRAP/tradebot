@@ -155,6 +155,9 @@ def main():
     for symbol in active_symbols:
         is_deriv = symbol in DERIV_PAIRS
         clean_name = symbol.replace('=X', '').replace('^', '')
+    
+        # ADD THIS LINE: Explicit progress tracker for your GitHub logs
+        print(f"🔍 [SCANNING] {clean_name} ({'Deriv' if is_deriv else 'Standard Market'})...")
         
         # 1. Higher Timeframe Structure Check
         df_4h = get_data(symbol, '4h', is_deriv)
