@@ -15,7 +15,11 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 STANDARD_PAIRS = [
     # Forex Majors
-    'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'USDCHF=X', 'USDCAD=X', 'NZDUSD=X',
+    'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'USDCHF=X', 'USDCAD=X', 'NZDUSD=X'
+
+    # Your New Crosses (Added Here!)
+    'EURGBP=X', 'EURAUD=X', 'EURNZD=X', 'GBPAUD=X', 'GBPCAD=X',
+    
     # Global Indices (SPX, Nth, Jp225, Uk100, Nasdaq, GER, FRA)
     '^GSPC', '^AEX', '^N225', '^FTSE', '^IXIC', '^GDAXI', '^FCHI'
 ]
@@ -99,25 +103,36 @@ def fetch_deriv_candles_sync(symbol, granularity, count=150):
         return None
 
 def get_data(symbol, timeframe, is_deriv):
+def get_data(symbol, timeframe, is_deriv):
     if is_deriv:
         time.sleep(0.2)  # Fast pacing for lightweight websockets
-        tf_map = {'15m': 900, '30m': 1800, '4h': 14400}
+        # UPDATED: Added raw second conversions for 1h and 8h frames
+        tf_map = {
+            '15m': 900, 
+            '30m': 1800, 
+            '1h': 3600, 
+            '4h': 14400, 
+            '8h': 28800
+        }
         return fetch_deriv_candles_sync(symbol, tf_map.get(timeframe, 900))
     else:
         time.sleep(1.5)  # Safe throttling cushion to preserve GitHub cloud IP health
         try:
-            period = '30d' if timeframe == '4h' else '5d'
-            df = yf.download(symbol, interval=timeframe, period=period, progress=False, multi_level_index=False)
-            
-            if df is None or df.empty: 
-                print(f"⚠️ Yahoo returned empty dataframe for: {symbol}")
-                return None
+            # UPDATED: Added safety padding buffers for macro timeframes
+            if timeframe in ['4h', '8h']:
+                period = '30d'
+            elif timeframe == '1h':
+                period = '14d'
+            else:
+                period = '5d'
                 
-            df.reset_index(inplace=True)
-            df.columns = [str(c).strip().lower().capitalize() for c in df.columns]
-            return df[['Open', 'High', 'Low', 'Close']].dropna()
-        except Exception as e: 
-            print(f"❌ Yahoo Finance system exception for {symbol}: {e}")
+            # WORKAROUND: Map 8h to 1h for Yahoo Finance to prevent API errors
+            yf_interval = '1h' if timeframe == '8h' else timeframe
+            
+            df = yf.download(symbol, interval=yf_interval, period=period, progress=False, multi_level_index=False)
+            return df
+        except Exception as e:
+            print(f"⚠️ Yahoo Finance Error on {symbol} ({timeframe}): {e}")
             return None
 
 # ==========================================
@@ -262,7 +277,7 @@ def main():
             triggered_alerts.append(f"🏛️ <b>SMC LIQUIDITY TRAP</b>\n🚨 Signal: {trap_result}\n🎯 Asset: <b>{clean_name} (4H)</b>\n📊 Context: {qt_status}")
 
         # 2. Lower Timeframe Momentum Crossovers
-        for tf in ['15m', '30m']:
+        for tf in ['15m', '30m' '1h', '4h', '8h']:
             df = get_data(symbol, tf, is_deriv)
             if df is None or len(df) < 15: continue
             
