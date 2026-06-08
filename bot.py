@@ -103,7 +103,6 @@ def fetch_deriv_candles_sync(symbol, granularity, count=150):
         return None
 
 def get_data(symbol, timeframe, is_deriv):
-def get_data(symbol, timeframe, is_deriv):
     if is_deriv:
         time.sleep(0.2)  # Fast pacing for lightweight websockets
         # UPDATED: Added raw second conversions for 1h and 8h frames
@@ -277,7 +276,7 @@ def main():
             triggered_alerts.append(f"🏛️ <b>SMC LIQUIDITY TRAP</b>\n🚨 Signal: {trap_result}\n🎯 Asset: <b>{clean_name} (4H)</b>\n📊 Context: {qt_status}")
 
         # 2. Lower Timeframe Momentum Crossovers
-        for tf in ['15m', '30m' '1h', '4h', '8h']:
+        for tf in ['15m', '30m', '1h', '4h', '8h']:
             df = get_data(symbol, tf, is_deriv)
             if df is None or len(df) < 15: continue
             
