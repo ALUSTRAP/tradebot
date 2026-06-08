@@ -99,20 +99,111 @@ def fetch_deriv_candles_sync(symbol, granularity, count=150):
         return None
 
 def get_data(symbol, timeframe, is_deriv):
-    time.sleep(1.0)  # Throttling guard to protect IP reputation
     if is_deriv:
+        time.sleep(0.2)  # Fast pacing for lightweight websockets
         tf_map = {'15m': 900, '30m': 1800, '4h': 14400}
         return fetch_deriv_candles_sync(symbol, tf_map.get(timeframe, 900))
     else:
+        time.sleep(1.5)  # Safe throttling cushion to preserve GitHub cloud IP health
         try:
             period = '30d' if timeframe == '4h' else '5d'
-            df = yf.download(symbol, interval=timeframe, period=period, progress=False)
-            if df.empty: return None
+            df = yf.download(symbol, interval=timeframe, period=period, progress=False, multi_level_index=False)
+            
+            if df is None or df.empty: 
+                print(f"⚠️ Yahoo returned empty dataframe for: {symbol}")
+                return None
+                
             df.reset_index(inplace=True)
             df.columns = [str(c).strip().lower().capitalize() for c in df.columns]
             return df[['Open', 'High', 'Low', 'Close']].dropna()
-        except: 
+        except Exception as e: 
+            print(f"❌ Yahoo Finance system exception for {symbol}: {e}")
             return None
+
+# ==========================================
+# NEW: LIVE ECONOMIC CALENDAR DATA ENGINE
+# ==========================================
+def clean_economic_value(val_str):
+    if not val_str or str(val_str).strip() == "": return None
+    try:
+        clean = "".join([c for c in str(val_str) if c.isdigit() or c in ['.', '-']])
+        return float(clean) if clean else None
+    except:
+        return None
+
+def fetch_economic_news_alerts():
+    url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
+    news_alerts = []
+    try:
+        res = requests.get(url, timeout=12)
+        if res.status_code != 200:
+            print(f"⚠️ News API connection response code: {res.status_code}")
+            return news_alerts
+            
+        events = res.json()
+        lagos_today = (datetime.utcnow() + timedelta(hours=1)).strftime("%Y-%m-%d")
+        
+        for event in events:
+            # Match calendar events scheduled for today
+            if lagos_today in event.get('date', ''):
+                impact = event.get('impact', 'Low')
+                country = event.get('country', '')
+                title = event.get('title', '')
+                
+                # We strictly screen for Medium & High Impact occurrences affecting our trading list
+                if impact in ['High', 'Medium'] and country in ['USD', 'EUR', 'GBP', 'AUD', 'CAD', 'CHF', 'NZD']:
+                    act_str = event.get('actual', '')
+                    for_str = event.get('forecast', '')
+                    prev_str = event.get('previous', '')
+                    
+                    # Case A: News is scheduled but values have not been released yet
+                    if not act_str:
+                        news_alerts.append(
+                            f"📅 <b>UPCOMING IMPACT NEWS ALERT</b>\n"
+                            f"🔴 Impact: <b>{impact}</b>\n"
+                            f"🌐 Currency: <b>{country}</b> | Asset: <b>{title}</b>\n"
+                            f"📊 Status: Pending Release (Standby for direction)"
+                        )
+                    # Case B: News dropped, actual data is live! Let's interpret values
+                    else:
+                        act_val = clean_economic_value(act_str)
+                        for_val = clean_economic_value(for_str)
+                        
+                        bias_message = "🔄 Mixed/Neutral Bias (Watch price action structure)"
+                        
+                        if act_val is not None and for_val is not None:
+                            # Account for inverted data sets where a LOWER number is bullish (Unemployment/Claims)
+                            is_inverted = any(k in title.lower() for k in ['unemployment', 'claims', 'jobless'])
+                            is_better = (act_val < for_val) if is_inverted else (act_val > for_val)
+                            
+                            if country == 'USD':
+                                if is_better:
+                                    bias_message = "🦅 <b>USD STRONG (BUY USD Bias)</b>\n📉 <b>SELL:</b> EURUSD, GBPUSD, AUDUSD, NZDUSD, ^GSPC, ^IXIC\n📈 <b>BUY:</b> USDCAD, USDCHF"
+                                else:
+                                    bias_message = "🪵 <b>USD WEAK (SELL USD Bias)</b>\n📈 <b>BUY:</b> EURUSD, GBPUSD, AUDUSD, NZDUSD, ^GSPC, ^IXIC\n📉 <b>SELL:</b> USDCAD, USDCHF"
+                            elif country == 'EUR':
+                                bias_message = f"📈 <b>BUY EURUSD</b>" if is_better else f"📉 <b>SELL EURUSD</b>"
+                            elif country == 'GBP':
+                                bias_message = f"📈 <b>BUY GBPUSD</b>" if is_better else f"📉 <b>SELL GBPUSD</b>"
+                            elif country == 'AUD':
+                                bias_message = f"📈 <b>BUY AUDUSD</b>" if is_better else f"📉 <b>SELL AUDUSD</b>"
+                            elif country == 'NZD':
+                                bias_message = f"📈 <b>BUY NZDUSD</b>" if is_better else f"📉 <b>SELL NZDUSD</b>"
+                            elif country == 'CAD':
+                                bias_message = f"📉 <b>SELL USDCAD</b>" if is_better else f"📈 <b>BUY USDCAD</b>"
+                            elif country == 'CHF':
+                                bias_message = f"📉 <b>SELL USDCHF</b>" if is_better else f"📈 <b>BUY USDCHF</b>"
+                        
+                        news_alerts.append(
+                            f"⚡ <b>LIVE ECONOMIC RELEASE IMPACT</b>\n"
+                            f"📢 Event: <b>{title} ({country})</b>\n"
+                            f"🎯 Actual: <b>{act_str}</b> | Forecast: <b>{for_str}</b> | Prev: {prev_str}\n"
+                            f"⚖️ Macro Directional Vector:\n{bias_message}"
+                        )
+        return news_alerts
+    except Exception as e:
+        print(f"❌ Failed to parse macroeconomic calendar: {e}")
+        return news_alerts
 
 # ==========================================
 # 4. CHARTNAGARI SMC STRATEGY LOGIC
@@ -150,13 +241,18 @@ def main():
     
     timestamp_str, is_weekend, qt_status = get_market_context()
     active_symbols = DERIV_PAIRS if is_weekend else (STANDARD_PAIRS + DERIV_PAIRS)
+    
     triggered_alerts = []
+    
+    # Run Macro Economic Engine First
+    economic_news = [] if is_weekend else fetch_economic_news_alerts()
+    if economic_news:
+        triggered_alerts.extend(economic_news)
 
     for symbol in active_symbols:
         is_deriv = symbol in DERIV_PAIRS
         clean_name = symbol.replace('=X', '').replace('^', '')
-    
-        # ADD THIS LINE: Explicit progress tracker for your GitHub logs
+        
         print(f"🔍 [SCANNING] {clean_name} ({'Deriv' if is_deriv else 'Standard Market'})...")
         
         # 1. Higher Timeframe Structure Check
