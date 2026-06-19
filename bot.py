@@ -18,7 +18,7 @@ STANDARD_PAIRS = [
     'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'USDCHF=X', 'USDCAD=X', 'NZDUSD=X'
 
     # Your New Crosses (Added Here!)
-    'EURGBP=X', 'EURAUD=X', 'EURNZD=X', 'GBPAUD=X', 'GBPCAD=X',
+    'EURGBP=X', 'EURAUD=X', 'AUDCAD=X', 'GBPAUD=X', 'GBPCAD=X',
     
     # Global Indices (SPX, Nth, Jp225, Uk100, Nasdaq, GER, FRA)
     '^GSPC', '^AEX', '^N225', '^FTSE', '^IXIC', '^GDAXI', '^FCHI'
@@ -31,8 +31,12 @@ DERIV_PAIRS = [
     '1HZ10V', '1HZ25V', '1HZ50V', '1HZ75V', '1HZ90V', '1HZ100V',
     # Jump Indices
     'JD10', 'JD25',
-    # Boom Indices
-    'BOOM300', 'BOOM900', 'BOOM1000',
+     # Boom Indices
+    "BOOM50", "BOOM100", "BOOM150", "BOOM200", 
+    "BOOM300", "BOOM500", "BOOM600", "BOOM900", "BOOM1000",
+    # Crash Indices
+    "CRASH50", "CRASH100", "CRASH150", "CRASH200", 
+    "CRASH300", "CRASH500", "CRASH600", "CRASH900", "CRASH1000"
     # Step Indices
     'STP', 'STP200', 'STP300', 'STP400', 'STP500'
 ]
