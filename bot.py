@@ -3,6 +3,7 @@ import json
 import time
 import requests
 import pandas as pd
+import numpy as np
 import yfinance as yf
 import websocket  # Synchronous client bypassing the GitHub event loop bug
 from datetime import datetime, timedelta
@@ -15,9 +16,9 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 STANDARD_PAIRS = [
     # Forex Majors
-    'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'USDCHF=X', 'USDCAD=X', 'NZDUSD=X'
+    'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'USDCHF=X', 'USDCAD=X', 'NZDUSD=X',
 
-    # Your New Crosses (Added Here!)
+    # Your New Crosses
     'EURGBP=X', 'EURAUD=X', 'AUDCAD=X', 'GBPAUD=X', 'GBPCAD=X',
     
     # Global Indices (SPX, Nth, Jp225, Uk100, Nasdaq, GER, FRA)
@@ -36,7 +37,7 @@ DERIV_PAIRS = [
     'BOOM300', 'BOOM500', 'BOOM600', 'BOOM900', 'BOOM1000',
     # Crash Indices
     'CRASH50', 'CRASH100', 'CRASH150', 'CRASH200', 
-    'CRASH300', 'CRASH500', 'CRASH600', 'CRASH900', 'CRASH1000'
+    'CRASH300', 'CRASH500', 'CRASH600', 'CRASH900', 'CRASH1000',
     # Step Indices
     'STP', 'STP200', 'STP300', 'STP400', 'STP500'
 ]
@@ -109,7 +110,6 @@ def fetch_deriv_candles_sync(symbol, granularity, count=150):
 def get_data(symbol, timeframe, is_deriv):
     if is_deriv:
         time.sleep(0.2)  # Fast pacing for lightweight websockets
-        # UPDATED: Added raw second conversions for 1h and 8h frames
         tf_map = {
             '15m': 900, 
             '30m': 1800, 
@@ -121,7 +121,6 @@ def get_data(symbol, timeframe, is_deriv):
     else:
         time.sleep(1.5)  # Safe throttling cushion to preserve GitHub cloud IP health
         try:
-            # UPDATED: Added safety padding buffers for macro timeframes
             if timeframe in ['4h', '8h']:
                 period = '30d'
             elif timeframe == '1h':
@@ -129,7 +128,6 @@ def get_data(symbol, timeframe, is_deriv):
             else:
                 period = '5d'
                 
-            # WORKAROUND: Map 8h to 1h for Yahoo Finance to prevent API errors
             yf_interval = '1h' if timeframe == '8h' else timeframe
             
             df = yf.download(symbol, interval=yf_interval, period=period, progress=False, multi_level_index=False)
@@ -139,7 +137,7 @@ def get_data(symbol, timeframe, is_deriv):
             return None
 
 # ==========================================
-# NEW: LIVE ECONOMIC CALENDAR DATA ENGINE
+# UPDATED: LIVE ECONOMIC CALENDAR DATA ENGINE WITH TIME STAMPS
 # ==========================================
 def clean_economic_value(val_str):
     if not val_str or str(val_str).strip() == "": return None
@@ -162,27 +160,32 @@ def fetch_economic_news_alerts():
         lagos_today = (datetime.utcnow() + timedelta(hours=1)).strftime("%Y-%m-%d")
         
         for event in events:
-            # Match calendar events scheduled for today
             if lagos_today in event.get('date', ''):
                 impact = event.get('impact', 'Low')
                 country = event.get('country', '')
                 title = event.get('title', '')
                 
-                # We strictly screen for Medium & High Impact occurrences affecting our trading list
+                # Extract event execution time safely from the calendar payload
+                event_time = event.get('time', '')
+                if not event_time and 'T' in event.get('date', ''):
+                    # Fallback parser if date contains combined ISO timestamp string structure
+                    event_time = event.get('date', '').split('T')[1][:5]
+                if not event_time:
+                    event_time = "Specified Today"
+                
                 if impact in ['High', 'Medium'] and country in ['USD', 'EUR', 'GBP', 'AUD', 'CAD', 'CHF', 'NZD']:
                     act_str = event.get('actual', '')
                     for_str = event.get('forecast', '')
                     prev_str = event.get('previous', '')
                     
-                    # Case A: News is scheduled but values have not been released yet
                     if not act_str:
                         news_alerts.append(
                             f"📅 <b>UPCOMING IMPACT NEWS ALERT</b>\n"
                             f"🔴 Impact: <b>{impact}</b>\n"
+                            f"⏰ Time: <b>{event_time}</b>\n"
                             f"🌐 Currency: <b>{country}</b> | Asset: <b>{title}</b>\n"
                             f"📊 Status: Pending Release (Standby for direction)"
                         )
-                    # Case B: News dropped, actual data is live! Let's interpret values
                     else:
                         act_val = clean_economic_value(act_str)
                         for_val = clean_economic_value(for_str)
@@ -190,7 +193,6 @@ def fetch_economic_news_alerts():
                         bias_message = "🔄 Mixed/Neutral Bias (Watch price action structure)"
                         
                         if act_val is not None and for_val is not None:
-                            # Account for inverted data sets where a LOWER number is bullish (Unemployment/Claims)
                             is_inverted = any(k in title.lower() for k in ['unemployment', 'claims', 'jobless'])
                             is_better = (act_val < for_val) if is_inverted else (act_val > for_val)
                             
@@ -215,6 +217,7 @@ def fetch_economic_news_alerts():
                         news_alerts.append(
                             f"⚡ <b>LIVE ECONOMIC RELEASE IMPACT</b>\n"
                             f"📢 Event: <b>{title} ({country})</b>\n"
+                            f"⏰ Time: <b>{event_time}</b>\n"
                             f"🎯 Actual: <b>{act_str}</b> | Forecast: <b>{for_str}</b> | Prev: {prev_str}\n"
                             f"⚖️ Macro Directional Vector:\n{bias_message}"
                         )
@@ -254,7 +257,6 @@ def scan_smc_trap(df):
 # 5. EXECUTION MOTOR
 # ==========================================
 def main():
-    # Immediate Diagnostic Ping to prove the pipeline is completely repaired
     send_telegram_alert("🧪 <b>SYSTEM CHECK:</b> TradeBot Autopilot is online and actively scanning all 31 structures.")
     
     timestamp_str, is_weekend, qt_status = get_market_context()
@@ -262,7 +264,6 @@ def main():
     
     triggered_alerts = []
     
-    # Run Macro Economic Engine First
     economic_news = [] if is_weekend else fetch_economic_news_alerts()
     if economic_news:
         triggered_alerts.extend(economic_news)
@@ -279,11 +280,12 @@ def main():
         if trap_result:
             triggered_alerts.append(f"🏛️ <b>SMC LIQUIDITY TRAP</b>\n🚨 Signal: {trap_result}\n🎯 Asset: <b>{clean_name} (4H)</b>\n📊 Context: {qt_status}")
 
-        # 2. Lower Timeframe Momentum Crossovers
+        # 2. Lower/Macro Timeframe Engine Loops
         for tf in ['15m', '30m', '1h', '4h', '8h']:
             df = get_data(symbol, tf, is_deriv)
-            if df is None or len(df) < 15: continue
+            if df is None or len(df) < 20: continue
             
+            # --- Retain Existing Core EMA Engine Configurations ---
             df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
             df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
             
@@ -291,6 +293,46 @@ def main():
                 triggered_alerts.append(f"🟢 <b>EMA BULLISH CROSSOVER</b>\n📈 Asset: <b>{clean_name} ({tf})</b>\n💰 Price: {round(df['Close'].iloc[-1], 4)}")
             elif df['EMA_9'].iloc[-2] >= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] < df['EMA_12'].iloc[-1]:
                 triggered_alerts.append(f"🔴 <b>EMA BEARISH CROSSUNDER</b>\n📉 Asset: <b>{clean_name} ({tf})</b>\n💰 Price: {round(df['Close'].iloc[-1], 4)}")
+
+            # --- NEW: DeMARKER 15 DIRECTIONAL ENGINE (Restricted to M30 and Higher) ---
+            if tf in ['30m', '1h', '4h', '8h']:
+                # Calculate directional differences on candles
+                high_diff = df['High'].diff()
+                demax = np.where(high_diff > 0, high_diff, 0.0)
+                
+                low_diff = df['Low'].shift(1) - df['Low']
+                demin = np.where(low_diff > 0, low_diff, 0.0)
+                
+                # Apply 15-period rolling simple moving averages
+                demax_sma = pd.Series(demax).rolling(window=15).mean()
+                demin_sma = pd.Series(demin).rolling(window=15).mean()
+                
+                demarker_series = demax_sma / (demax_sma + demin_sma)
+                
+                # Evaluate using closed indices (-2 and -3) to completely prevent repainting issues
+                if len(demarker_series) >= 3:
+                    current_dem = demarker_series.iloc[-2]
+                    prev_dem = demarker_series.iloc[-3]
+                    current_price = df['Close'].iloc[-1]
+                    
+                    # BUY: DeMarker climbs back ABOVE 0.3 (Oversold Exhaustion Reversal)
+                    if prev_dem < 0.3 and current_dem >= 0.3:
+                        triggered_alerts.append(
+                            f"🔵 <b>DeMARKER 15 BUY SIGNAL</b>\n"
+                            f"📈 Asset: <b>{clean_name} ({tf})</b>\n"
+                            f"💰 Price: {round(current_price, 4)}\n"
+                            f"📊 Value: {round(current_dem, 4)}\n"
+                            f"🔄 Context: Oversold recovery confirmation"
+                        )
+                    # SELL: DeMarker drops back BELOW 0.7 (Overbought Exhaustion Reversal)
+                    elif prev_dem > 0.7 and current_dem <= 0.7:
+                        triggered_alerts.append(
+                            f"🔴 <b>DeMARKER 15 SELL SIGNAL</b>\n"
+                            f"📉 Asset: <b>{clean_name} ({tf})</b>\n"
+                            f"💰 Price: {round(current_price, 4)}\n"
+                            f"📊 Value: {round(current_dem, 4)}\n"
+                            f"🔄 Context: Overbought distribution confirmation"
+                        )
 
     if len(triggered_alerts) > 0:
         final_payload = [f"⚡ <b>TRADERULES COMPASS SIGNALS (Lagos: {timestamp_str})</b>", "========================"]
