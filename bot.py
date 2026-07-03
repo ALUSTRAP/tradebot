@@ -20,6 +20,10 @@ STANDARD_PAIRS = [
 
     # Your New Crosses
     'EURGBP=X', 'EURAUD=X', 'AUDCAD=X', 'GBPAUD=X', 'GBPCAD=X',
+
+    # Precious Metals (Added Here!)
+    'GC=F',  # Gold COMEX Futures (Tracks XAUUSD price action reliably)
+    'SI=F',  # Silver COMEX Futures (Tracks XAGUSD price action reliably)
     
     # Global Indices (SPX, Nth, Jp225, Uk100, Nasdaq, GER, FRA)
     '^GSPC', '^AEX', '^N225', '^FTSE', '^IXIC', '^GDAXI', '^FCHI'
@@ -287,11 +291,11 @@ def main():
             
             # --- Retain Existing Core EMA Engine Configurations ---
             df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
-            df['EMA_12'] = df['Close'].ewm(span=12, adjust=False).mean()
+            df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
             
-            if df['EMA_9'].iloc[-2] <= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] > df['EMA_12'].iloc[-1]:
+            if df['EMA_9'].iloc[-2] <= df['EMA_21'].iloc[-2] and df['EMA_9'].iloc[-1] > df['EMA_21'].iloc[-1]:
                 triggered_alerts.append(f"🟢 <b>EMA BULLISH CROSSOVER</b>\n📈 Asset: <b>{clean_name} ({tf})</b>\n💰 Price: {round(df['Close'].iloc[-1], 4)}")
-            elif df['EMA_9'].iloc[-2] >= df['EMA_12'].iloc[-2] and df['EMA_9'].iloc[-1] < df['EMA_12'].iloc[-1]:
+            elif df['EMA_9'].iloc[-2] >= df['EMA_21'].iloc[-2] and df['EMA_9'].iloc[-1] < df['EMA_21'].iloc[-1]:
                 triggered_alerts.append(f"🔴 <b>EMA BEARISH CROSSUNDER</b>\n📉 Asset: <b>{clean_name} ({tf})</b>\n💰 Price: {round(df['Close'].iloc[-1], 4)}")
 
             # --- NEW: DeMARKER 15 DIRECTIONAL ENGINE (Restricted to M30 and Higher) ---
