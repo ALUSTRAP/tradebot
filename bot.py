@@ -9,7 +9,7 @@ import websocket  # Synchronous client bypassing the GitHub event loop bug
 from datetime import datetime, timedelta
 
 # ==========================================
-# 1. CONFIGURATION & ALL 31 TARGET ASSETS
+# 1. CONFIGURATION & TARGET ASSETS
 # ==========================================
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -18,14 +18,14 @@ STANDARD_PAIRS = [
     # Forex Majors
     'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'USDCHF=X', 'USDCAD=X', 'NZDUSD=X',
 
-    # Your New Crosses
+    # Crosses
     'EURGBP=X', 'EURAUD=X', 'AUDCAD=X', 'GBPAUD=X', 'GBPCAD=X',
 
-    # Precious Metals (Added Here!)
-    'GC=F',  # Gold COMEX Futures (Tracks XAUUSD price action reliably)
-    'SI=F',  # Silver COMEX Futures (Tracks XAGUSD price action reliably)
+    # Precious Metals
+    'GC=F',  # Gold COMEX Futures
+    'SI=F',  # Silver COMEX Futures
     
-    # Global Indices (SPX, Nth, Jp225, Uk100, Nasdaq, GER, FRA)
+    # Global Indices
     '^GSPC', '^AEX', '^N225', '^FTSE', '^IXIC', '^GDAXI', '^FCHI'
 ]
 
@@ -49,7 +49,7 @@ DERIV_PAIRS = [
 def send_telegram_alert(message):
     token = str(TELEGRAM_BOT_TOKEN).strip()
     if token.lower().startswith("bot"):
-        token = token[3:]  # Safely strip prefix without altering the inner hash
+        token = token[3:]  
         
     url = f"https://api.telegram.org/bot{token}/sendMessage"
     payload = {"chat_id": str(TELEGRAM_CHAT_ID).strip(), "text": message, "parse_mode": "HTML"}
@@ -85,7 +85,7 @@ def get_market_context():
     return timestamp_str, is_weekend, qt_status
 
 # ==========================================
-# 3. FIXED SYNCHRONOUS DATA FETCHING
+# 3. ROBUST DATA FETCHING & RESAMPLING MATRIX
 # ==========================================
 def fetch_deriv_candles_sync(symbol, granularity, count=150):
     uri = "wss://ws.derivws.com/websockets/v3?app_id=1089"
@@ -113,35 +113,47 @@ def fetch_deriv_candles_sync(symbol, granularity, count=150):
 
 def get_data(symbol, timeframe, is_deriv):
     if is_deriv:
-        time.sleep(0.2)  # Fast pacing for lightweight websockets
-        tf_map = {
-            '15m': 900, 
-            '30m': 1800, 
-            '1h': 3600, 
-            '4h': 14400, 
-            '8h': 28800
-        }
+        time.sleep(0.1)  
+        tf_map = {'15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '8h': 28800}
         return fetch_deriv_candles_sync(symbol, tf_map.get(timeframe, 900))
     else:
-        time.sleep(1.5)  # Safe throttling cushion to preserve GitHub cloud IP health
+        time.sleep(1.2)  
         try:
-            if timeframe in ['4h', '8h']:
+            # Realigned configuration parameters for traditional asset stability
+            if timeframe == '1d':
+                yf_interval = '1d'
+                period = '90d'
+            elif timeframe == '4h':
+                yf_interval = '1h'  # Download hourly bars to build custom 4H data frames
                 period = '30d'
             elif timeframe == '1h':
+                yf_interval = '1h'
                 period = '14d'
             else:
+                yf_interval = timeframe
                 period = '5d'
                 
-            yf_interval = '1h' if timeframe == '8h' else timeframe
-            
-            df = yf.download(symbol, interval=yf_interval, period=period, progress=False, multi_level_index=False)
+            df = yf.download(symbol, interval=yf_interval, period=period, progress=False)
+            if df is None or df.empty:
+                return None
+                
+            # CRITICAL FIX: Flatten MultiIndex columns returned by modern yfinance engines
+            if isinstance(df.columns, pd.MultiIndex):
+                df.columns = df.columns.get_level_values(0)
+                
+            # CRITICAL FIX: Custom Resampling Engine for 4-Hour structures
+            if timeframe == '4h':
+                df = df.resample('4H').agg({
+                    'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'
+                }).dropna()
+                
             return df
         except Exception as e:
             print(f"⚠️ Yahoo Finance Error on {symbol} ({timeframe}): {e}")
             return None
 
 # ==========================================
-# UPDATED: LIVE ECONOMIC CALENDAR DATA ENGINE WITH TIME STAMPS
+# 4. LIVE ECONOMIC CALENDAR DATA ENGINE
 # ==========================================
 def clean_economic_value(val_str):
     if not val_str or str(val_str).strip() == "": return None
@@ -169,10 +181,8 @@ def fetch_economic_news_alerts():
                 country = event.get('country', '')
                 title = event.get('title', '')
                 
-                # Extract event execution time safely from the calendar payload
                 event_time = event.get('time', '')
                 if not event_time and 'T' in event.get('date', ''):
-                    # Fallback parser if date contains combined ISO timestamp string structure
                     event_time = event.get('date', '').split('T')[1][:5]
                 if not event_time:
                     event_time = "Specified Today"
@@ -231,7 +241,7 @@ def fetch_economic_news_alerts():
         return news_alerts
 
 # ==========================================
-# 4. CHARTNAGARI SMC STRATEGY LOGIC
+# 5. CHARTNAGARI SMC STRATEGY LOGIC
 # ==========================================
 def scan_smc_trap(df):
     if df is None or len(df) < 50: return None
@@ -258,89 +268,101 @@ def scan_smc_trap(df):
     return None
 
 # ==========================================
-# 5. EXECUTION MOTOR
+# 6. EXECUTION ENGINE (WITH ASSET GROUPING)
 # ==========================================
 def main():
-    send_telegram_alert("🧪 <b>SYSTEM CHECK:</b> TradeBot Autopilot is online and actively scanning all 31 structures.")
+    send_telegram_alert("🧪 <b>SYSTEM CHECK:</b> TradeBot Autopilot is running unified scan matrix.")
     
     timestamp_str, is_weekend, qt_status = get_market_context()
     active_symbols = DERIV_PAIRS if is_weekend else (STANDARD_PAIRS + DERIV_PAIRS)
     
-    triggered_alerts = []
+    # Core dictionary map for collecting technical signals organized strictly by asset key
+    asset_grouped_alerts = {}
     
     economic_news = [] if is_weekend else fetch_economic_news_alerts()
-    if economic_news:
-        triggered_alerts.extend(economic_news)
 
     for symbol in active_symbols:
         is_deriv = symbol in DERIV_PAIRS
         clean_name = symbol.replace('=X', '').replace('^', '')
         
-        print(f"🔍 [SCANNING] {clean_name} ({'Deriv' if is_deriv else 'Standard Market'})...")
+        # Local container for any active triggers on this unique symbol loop
+        current_pair_alerts = []
         
         # 1. Higher Timeframe Structure Check
         df_4h = get_data(symbol, '4h', is_deriv)
         trap_result = scan_smc_trap(df_4h)
         if trap_result:
-            triggered_alerts.append(f"🏛️ <b>SMC LIQUIDITY TRAP</b>\n🚨 Signal: {trap_result}\n🎯 Asset: <b>{clean_name} (4H)</b>\n📊 Context: {qt_status}")
+            current_pair_alerts.append(f"🏛️ <b>SMC LIQUIDITY TRAP (4H)</b>\n🚨 Signal: {trap_result}\n📊 Context: {qt_status}")
 
-        # 2. Lower/Macro Timeframe Engine Loops
-        for tf in ['15m', '30m', '1h', '4h', '8h']:
+        # 2. Lower & Macro Timeframe Engine Loops
+        # Custom timeframes loop: Uses 8h for Deriv websockets, drops 8h for Daily ('1d') on yfinance
+        target_timeframes = ['15m', '30m', '1h', '4h', '8h'] if is_deriv else ['15m', '30m', '1h', '4h', '1d']
+        
+        for tf in target_timeframes:
             df = get_data(symbol, tf, is_deriv)
-            if df is None or len(df) < 20: continue
+            if df is None or len(df) < 30: continue  
             
-            # --- Retain Existing Core EMA Engine Configurations ---
+            # --- 9 / 21 EMA MATRIX ---
             df['EMA_9'] = df['Close'].ewm(span=9, adjust=False).mean()
-            df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()
+            df['EMA_21'] = df['Close'].ewm(span=21, adjust=False).mean()  
             
             if df['EMA_9'].iloc[-2] <= df['EMA_21'].iloc[-2] and df['EMA_9'].iloc[-1] > df['EMA_21'].iloc[-1]:
-                triggered_alerts.append(f"🟢 <b>EMA BULLISH CROSSOVER</b>\n📈 Asset: <b>{clean_name} ({tf})</b>\n💰 Price: {round(df['Close'].iloc[-1], 4)}")
+                current_pair_alerts.append(f"🟢 <b>EMA BULLISH CROSSOVER (9/21) [{tf}]</b>\n💰 Price: {round(df['Close'].iloc[-1], 4)}")
             elif df['EMA_9'].iloc[-2] >= df['EMA_21'].iloc[-2] and df['EMA_9'].iloc[-1] < df['EMA_21'].iloc[-1]:
-                triggered_alerts.append(f"🔴 <b>EMA BEARISH CROSSUNDER</b>\n📉 Asset: <b>{clean_name} ({tf})</b>\n💰 Price: {round(df['Close'].iloc[-1], 4)}")
+                current_pair_alerts.append(f"🔴 <b>EMA BEARISH CROSSUNDER (9/21) [{tf}]</b>\n📉 Price: {round(df['Close'].iloc[-1], 4)}")
 
-            # --- NEW: DeMARKER 15 DIRECTIONAL ENGINE (Restricted to M30 and Higher) ---
-            if tf in ['30m', '1h', '4h', '8h']:
-                # Calculate directional differences on candles
+            # --- DeMARKER 15 DIRECTIONAL ENGINE ---
+            if tf in ['30m', '1h', '4h', '8h', '1d']:
                 high_diff = df['High'].diff()
                 demax = np.where(high_diff > 0, high_diff, 0.0)
                 
                 low_diff = df['Low'].shift(1) - df['Low']
                 demin = np.where(low_diff > 0, low_diff, 0.0)
                 
-                # Apply 15-period rolling simple moving averages
                 demax_sma = pd.Series(demax).rolling(window=15).mean()
                 demin_sma = pd.Series(demin).rolling(window=15).mean()
                 
                 demarker_series = demax_sma / (demax_sma + demin_sma)
                 
-                # Evaluate using closed indices (-2 and -3) to completely prevent repainting issues
                 if len(demarker_series) >= 3:
                     current_dem = demarker_series.iloc[-2]
                     prev_dem = demarker_series.iloc[-3]
                     current_price = df['Close'].iloc[-1]
                     
-                    # BUY: DeMarker climbs back ABOVE 0.3 (Oversold Exhaustion Reversal)
                     if prev_dem < 0.3 and current_dem >= 0.3:
-                        triggered_alerts.append(
-                            f"🔵 <b>DeMARKER 15 BUY SIGNAL</b>\n"
-                            f"📈 Asset: <b>{clean_name} ({tf})</b>\n"
-                            f"💰 Price: {round(current_price, 4)}\n"
-                            f"📊 Value: {round(current_dem, 4)}\n"
+                        current_pair_alerts.append(
+                            f"🔵 <b>DeMARKER 15 BUY SIGNAL [{tf}]</b>\n"
+                            f"💰 Price: {round(current_price, 4)} | 📊 Value: {round(current_dem, 4)}\n"
                             f"🔄 Context: Oversold recovery confirmation"
                         )
-                    # SELL: DeMarker drops back BELOW 0.7 (Overbought Exhaustion Reversal)
                     elif prev_dem > 0.7 and current_dem <= 0.7:
-                        triggered_alerts.append(
-                            f"🔴 <b>DeMARKER 15 SELL SIGNAL</b>\n"
-                            f"📉 Asset: <b>{clean_name} ({tf})</b>\n"
-                            f"💰 Price: {round(current_price, 4)}\n"
-                            f"📊 Value: {round(current_dem, 4)}\n"
+                        current_pair_alerts.append(
+                            f"🔴 <b>DeMARKER 15 SELL SIGNAL [{tf}]</b>\n"
+                            f"📉 Price: {round(current_price, 4)} | 📊 Value: {round(current_dem, 4)}\n"
                             f"🔄 Context: Overbought distribution confirmation"
                         )
+                        
+        # Store technical indicators grouped neatly under the target pair
+        if current_pair_alerts:
+            asset_grouped_alerts[clean_name] = current_pair_alerts
 
-    if len(triggered_alerts) > 0:
+    # ==========================================
+    # 7. TELEGRAM DISPATCH FORMATTING MATRIX
+    # ==========================================
+    if len(economic_news) > 0 or len(asset_grouped_alerts) > 0:
         final_payload = [f"⚡ <b>TRADERULES COMPASS SIGNALS (Lagos: {timestamp_str})</b>", "========================"]
-        final_payload.extend(triggered_alerts)
+        
+        # A. Append macro calendar releases first
+        if economic_news:
+            final_payload.extend(economic_news)
+            final_payload.append("========================")
+            
+        # B. Append technical parameters systematically categorized under individual Asset blocks
+        if asset_grouped_alerts:
+            for asset_name, signals in asset_grouped_alerts.items():
+                asset_block = f"🔸 <b>{asset_name}</b>\n" + "\n\n".join(signals)
+                final_payload.append(asset_block)
+                
         send_telegram_alert("\n\n".join(final_payload))
     else:
         print(f"Scanner executed successfully at {timestamp_str} Lagos Time. Market quiet.")
