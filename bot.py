@@ -119,12 +119,11 @@ def get_data(symbol, timeframe, is_deriv):
     else:
         time.sleep(1.2)  
         try:
-            # Realigned configuration parameters for traditional asset stability
             if timeframe == '1d':
                 yf_interval = '1d'
                 period = '90d'
             elif timeframe == '4h':
-                yf_interval = '1h'  # Download hourly bars to build custom 4H data frames
+                yf_interval = '1h'  
                 period = '30d'
             elif timeframe == '1h':
                 yf_interval = '1h'
@@ -137,11 +136,9 @@ def get_data(symbol, timeframe, is_deriv):
             if df is None or df.empty:
                 return None
                 
-            # CRITICAL FIX: Flatten MultiIndex columns returned by modern yfinance engines
             if isinstance(df.columns, pd.MultiIndex):
                 df.columns = df.columns.get_level_values(0)
                 
-            # CRITICAL FIX: Custom Resampling Engine for 4-Hour structures
             if timeframe == '4h':
                 df = df.resample('4H').agg({
                     'Open': 'first', 'High': 'max', 'Low': 'min', 'Close': 'last'
@@ -166,11 +163,12 @@ def clean_economic_value(val_str):
 def fetch_economic_news_alerts():
     url = "https://nfs.faireconomy.media/ff_calendar_thisweek.json"
     news_alerts = []
+    pending_currencies = []
     try:
         res = requests.get(url, timeout=12)
         if res.status_code != 200:
             print(f"⚠️ News API connection response code: {res.status_code}")
-            return news_alerts
+            return news_alerts, pending_currencies
             
         events = res.json()
         lagos_today = (datetime.utcnow() + timedelta(hours=1)).strftime("%Y-%m-%d")
@@ -193,6 +191,7 @@ def fetch_economic_news_alerts():
                     prev_str = event.get('previous', '')
                     
                     if not act_str:
+                        pending_currencies.append(country)
                         news_alerts.append(
                             f"📅 <b>UPCOMING IMPACT NEWS ALERT</b>\n"
                             f"🔴 Impact: <b>{impact}</b>\n"
@@ -235,10 +234,10 @@ def fetch_economic_news_alerts():
                             f"🎯 Actual: <b>{act_str}</b> | Forecast: <b>{for_str}</b> | Prev: {prev_str}\n"
                             f"⚖️ Macro Directional Vector:\n{bias_message}"
                         )
-        return news_alerts
+        return news_alerts, pending_currencies
     except Exception as e:
         print(f"❌ Failed to parse macroeconomic calendar: {e}")
-        return news_alerts
+        return news_alerts, pending_currencies
 
 # ==========================================
 # 5. CHARTNAGARI SMC STRATEGY LOGIC
@@ -276,10 +275,11 @@ def main():
     timestamp_str, is_weekend, qt_status = get_market_context()
     active_symbols = DERIV_PAIRS if is_weekend else (STANDARD_PAIRS + DERIV_PAIRS)
     
-    # Core dictionary map for collecting technical signals organized strictly by asset key
+    # Core containers for alert collection and summary lines
     asset_grouped_alerts = {}
+    summary_matrix_lines = []
     
-    economic_news = [] if is_weekend else fetch_economic_news_alerts()
+    economic_news, pending_currencies = ([], []) if is_weekend else fetch_economic_news_alerts()
 
     for symbol in active_symbols:
         is_deriv = symbol in DERIV_PAIRS
@@ -288,14 +288,18 @@ def main():
         # Local container for any active triggers on this unique symbol loop
         current_pair_alerts = []
         
+        # Score counters for tracking criteria alignments
+        tally = {'smc_buy': 0, 'smc_sell': 0, 'dem_buy': 0, 'dem_sell': 0, 'ema_bull': 0, 'ema_bear': 0}
+        
         # 1. Higher Timeframe Structure Check
         df_4h = get_data(symbol, '4h', is_deriv)
         trap_result = scan_smc_trap(df_4h)
         if trap_result:
             current_pair_alerts.append(f"🏛️ <b>SMC LIQUIDITY TRAP (4H)</b>\n🚨 Signal: {trap_result}\n📊 Context: {qt_status}")
+            if "Buy-Side" in trap_result: tally['smc_buy'] = 1
+            if "Sell-Side" in trap_result: tally['smc_sell'] = 1
 
         # 2. Lower & Macro Timeframe Engine Loops
-        # Custom timeframes loop: Uses 8h for Deriv websockets, drops 8h for Daily ('1d') on yfinance
         target_timeframes = ['15m', '30m', '1h', '4h', '8h'] if is_deriv else ['15m', '30m', '1h', '4h', '1d']
         
         for tf in target_timeframes:
@@ -308,8 +312,10 @@ def main():
             
             if df['EMA_9'].iloc[-2] <= df['EMA_21'].iloc[-2] and df['EMA_9'].iloc[-1] > df['EMA_21'].iloc[-1]:
                 current_pair_alerts.append(f"🟢 <b>EMA BULLISH CROSSOVER (9/21) [{tf}]</b>\n💰 Price: {round(df['Close'].iloc[-1], 4)}")
+                tally['ema_bull'] += 1
             elif df['EMA_9'].iloc[-2] >= df['EMA_21'].iloc[-2] and df['EMA_9'].iloc[-1] < df['EMA_21'].iloc[-1]:
                 current_pair_alerts.append(f"🔴 <b>EMA BEARISH CROSSUNDER (9/21) [{tf}]</b>\n📉 Price: {round(df['Close'].iloc[-1], 4)}")
+                tally['ema_bear'] += 1
 
             # --- DeMARKER 15 DIRECTIONAL ENGINE ---
             if tf in ['30m', '1h', '4h', '8h', '1d']:
@@ -335,16 +341,50 @@ def main():
                             f"💰 Price: {round(current_price, 4)} | 📊 Value: {round(current_dem, 4)}\n"
                             f"🔄 Context: Oversold recovery confirmation"
                         )
+                        tally['dem_buy'] += 1
                     elif prev_dem > 0.7 and current_dem <= 0.7:
                         current_pair_alerts.append(
                             f"🔴 <b>DeMARKER 15 SELL SIGNAL [{tf}]</b>\n"
                             f"📉 Price: {round(current_price, 4)} | 📊 Value: {round(current_dem, 4)}\n"
                             f"🔄 Context: Overbought distribution confirmation"
                         )
+                        tally['dem_sell'] += 1
                         
-        # Store technical indicators grouped neatly under the target pair
+        # Store technical indicators grouped neatly under the target pair & build matrix entry
         if current_pair_alerts:
             asset_grouped_alerts[clean_name] = current_pair_alerts
+            
+            # Action matrix alignment logic
+            bias, quality, execution = "⏳ Neutral", "⭐ (Low)", "Mixed Signals"
+            is_conflict = (tally['smc_buy'] or tally['dem_buy'] or tally['ema_bull']) and (tally['smc_sell'] or tally['dem_sell'] or tally['ema_bear'])
+            
+            if is_conflict: 
+                quality, execution = "⭐⭐ (Low)", "Avoid / Timeframe Conflict"
+            elif tally['smc_buy'] and tally['dem_buy']: 
+                bias, quality, execution = "🔵 Long", "⭐⭐⭐⭐⭐", "Trap + Momentum Aligned"
+            elif tally['smc_sell'] and tally['dem_sell']: 
+                bias, quality, execution = "🔴 Short", "⭐⭐⭐⭐⭐", "Trap + Momentum Aligned"
+            elif tally['smc_buy']: 
+                bias, quality, execution = "🔵 Long", "⭐⭐⭐⭐", "Institutional Stop-Hunt"
+            elif tally['smc_sell']: 
+                bias, quality, execution = "🔴 Short", "⭐⭐⭐⭐", "Institutional Stop-Hunt"
+            elif tally['dem_buy'] > 1: 
+                bias, quality, execution = "🔵 Long", "⭐⭐⭐⭐", "Macro Accumulation"
+            elif tally['dem_sell'] > 1: 
+                bias, quality, execution = "🔴 Short", "⭐⭐⭐⭐", "Macro Distribution"
+            elif tally['dem_buy'] == 1 or tally['ema_bull'] > 0: 
+                bias, quality, execution = "🔵 Long", "⭐⭐⭐", "Short-Term Momentum"
+            elif tally['dem_sell'] == 1 or tally['ema_bear'] > 0: 
+                bias, quality, execution = "🔴 Short", "⭐⭐⭐", "Short-Term Momentum"
+            
+            # News risk validation for standard assets
+            if not is_deriv:
+                for curr in pending_currencies:
+                    if curr in clean_name:
+                        quality, execution = "⚠️ Risk", f"Wait for {curr} News"
+                        break
+                        
+            summary_matrix_lines.append(f"🔹 <b>{clean_name}:</b> {bias} | {quality} | {execution}")
 
     # ==========================================
     # 7. TELEGRAM DISPATCH FORMATTING MATRIX
@@ -362,6 +402,12 @@ def main():
             for asset_name, signals in asset_grouped_alerts.items():
                 asset_block = f"🔸 <b>{asset_name}</b>\n" + "\n\n".join(signals)
                 final_payload.append(asset_block)
+                
+        # C. Append calculated Action Summary Matrix at the very base
+        if summary_matrix_lines:
+            final_payload.append("========================")
+            final_payload.append("💡 <b>SUMMARY ACTION MATRIX</b>")
+            final_payload.extend(summary_matrix_lines)
                 
         send_telegram_alert("\n\n".join(final_payload))
     else:
