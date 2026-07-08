@@ -26,7 +26,7 @@ STANDARD_PAIRS = [
     'SI=F',  # Silver COMEX Futures
     
     # Global Indices
-    '^GSPC', '^AEX', '^N225', '^FTSE', '^IXIC', '^GDAXI', '^FCHI'
+    '^GSPC', '^AEX', '^N225', '^FTSE', '^NDX', '^GDAXI', '^FCHI'
 ]
 
 DERIV_PAIRS = [
