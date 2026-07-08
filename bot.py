@@ -16,10 +16,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 STANDARD_PAIRS = [
     # Forex Majors
-    'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'USDCHF=X', 'USDCAD=X', 'NZDUSD=X',
+    'EURUSD=X', 'GBPUSD=X', 'AUDUSD=X', 'USDCHF=X', 'USDCAD=X', 'AUDJPY=X',
 
     # Crosses
-    'EURGBP=X', 'EURAUD=X', 'AUDCAD=X', 'GBPAUD=X', 'GBPCAD=X',
+    'EURGBP=X', 'EURAUD=X', 'AUDCAD=X', 'GBPAUD=X', 'AUDJPY=X',
 
     # Precious Metals
     'GC=F',  # Gold COMEX Futures
@@ -311,7 +311,7 @@ def main():
             elif df['EMA_9'].iloc[-2] >= df['EMA_21'].iloc[-2] and df['EMA_9'].iloc[-1] < df['EMA_21'].iloc[-1]:
                 current_pair_alerts.append(f"🔴 <b>EMA BEARISH CROSSUNDER (9/21) [{tf}]</b>\n📉 Price: {round(df['Close'].iloc[-1], 4)}")
 
-            # --- DeMARKER 15 DIRECTIONAL ENGINE ---
+            # --- DeMARKER 28 DIRECTIONAL ENGINE ---
             if tf in ['30m', '1h', '4h', '8h', '1d']:
                 high_diff = df['High'].diff()
                 demax = np.where(high_diff > 0, high_diff, 0.0)
@@ -319,8 +319,8 @@ def main():
                 low_diff = df['Low'].shift(1) - df['Low']
                 demin = np.where(low_diff > 0, low_diff, 0.0)
                 
-                demax_sma = pd.Series(demax).rolling(window=15).mean()
-                demin_sma = pd.Series(demin).rolling(window=15).mean()
+                demax_sma = pd.Series(demax).rolling(window=28).mean()
+                demin_sma = pd.Series(demin).rolling(window=28).mean()
                 
                 demarker_series = demax_sma / (demax_sma + demin_sma)
                 
@@ -331,13 +331,13 @@ def main():
                     
                     if prev_dem < 0.3 and current_dem >= 0.3:
                         current_pair_alerts.append(
-                            f"🔵 <b>DeMARKER 15 BUY SIGNAL [{tf}]</b>\n"
+                            f"🔵 <b>DeMARKER 28 BUY SIGNAL [{tf}]</b>\n"
                             f"💰 Price: {round(current_price, 4)} | 📊 Value: {round(current_dem, 4)}\n"
                             f"🔄 Context: Oversold recovery confirmation"
                         )
                     elif prev_dem > 0.7 and current_dem <= 0.7:
                         current_pair_alerts.append(
-                            f"🔴 <b>DeMARKER 15 SELL SIGNAL [{tf}]</b>\n"
+                            f"🔴 <b>DeMARKER 28 SELL SIGNAL [{tf}]</b>\n"
                             f"📉 Price: {round(current_price, 4)} | 📊 Value: {round(current_dem, 4)}\n"
                             f"🔄 Context: Overbought distribution confirmation"
                         )
