@@ -2,7 +2,7 @@ name: TradeBot Autopilot
 
 on:
   schedule:
-    - cron: '0 * * * *' # Runs every hour on the hour
+    - cron: '17 * * * *'  # Runs at 17 minutes past every hour, dodging the `:00` queue rush
   workflow_dispatch: # Allows you to run it manually from GitHub
 
 jobs:
