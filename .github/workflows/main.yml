@@ -1,9 +1,9 @@
 name: TradeBot Autopilot
 
 on:
-  repository_dispatch:
-    types: [main]
-  workflow_dispatch:
+  schedule:
+    - cron: '0 */4 * * *' # Runs automatically every 4 hours
+  workflow_dispatch:      # Still allows manual runs
 
 jobs:
   run-bot:
